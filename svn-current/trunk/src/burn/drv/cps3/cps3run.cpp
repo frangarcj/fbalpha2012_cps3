@@ -38,6 +38,8 @@ static inline UINT64 GET_TIME_US(void) {
     return (UINT64)ts.tv_sec * 1000000ULL + ts.tv_nsec / 1000ULL;
 }
 #endif
+#include "cps3neon.h" // Include NEON optimized functions
+
 
 static UINT64 perf_cpu_time_us = 0;
 static UINT64 perf_draw_time_us = 0;
@@ -1768,11 +1770,21 @@ static void cps3_drawgfxzoom_2(UINT32 code, UINT32 pal, INT32 flipx, INT32 flipy
       {
 			switch( alpha )
          {
-            case 0:
+           case 0:
                for( INT32 y=sy; y<ey; y++ )
                {
                   UINT8 * source = source_base + (y_index>>16) * 16;
                   UINT32 * dest  = RamScreen + y * 512 * 2;
+                  
+                  // Optimized NEON path for 1:1 scale (dx=0x10000)
+                  #ifdef VITA
+                  if (dx == 0x10000) {
+                      cps3_drawgfxzoom_2_neon_opaque(source + (x_index_base >> 16), dest + sx, ex - sx, pal);
+                      y_index += dy;
+                      continue;
+                  }
+                  #endif
+                  
                   INT32 x_index  = x_index_base;
                   for(INT32 x=sx; x<ex; x++ )
                   {
@@ -1793,6 +1805,16 @@ static void cps3_drawgfxzoom_2(UINT32 code, UINT32 pal, INT32 flipx, INT32 flipy
                {
                   UINT8 * source = source_base + (y_index>>16) * 16;
                   UINT32 * dest = RamScreen + y * 512 * 2;
+                  
+                  // Optimized NEON path for 1:1 scale (dx=0x10000)
+                  #ifdef VITA
+                  if (dx == 0x10000) {
+                      cps3_drawgfxzoom_2_neon_alpha6(source + (x_index_base >> 16), dest + sx, ex - sx);
+                      y_index += dy;
+                      continue;
+                  }
+                  #endif
+
                   INT32 x_index = x_index_base;
                   for(INT32 x=sx; x<ex; x++ )
                   {
