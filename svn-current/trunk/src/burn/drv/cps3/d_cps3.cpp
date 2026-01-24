@@ -224,7 +224,7 @@ STDDIPINFOEXT(sfiiiusa, sfiii, usaRegion)
 // -----------------------------------------------
 static struct BurnRomInfo sfiiiRomDesc[] = {
 
-	{ "sfiii_usa.29f400.u2",			0x080000, 0xfb172a8e, BRF_ESS | BRF_BIOS },	// SH-2 Bios
+	{ "sfiii_euro.29f400.u2",			0x080000, 0x27699ddc, BRF_ESS | BRF_BIOS },	// SH-2 Bios
 
 #if !defined ROM_VERIFY
 	SFIII_970204_FLASH
