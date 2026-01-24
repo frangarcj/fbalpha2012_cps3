@@ -170,8 +170,8 @@ else ifeq ($(platform), vita)
 	CXX = arm-vita-eabi-g++$(EXE_EXT)
 	AR = arm-vita-eabi-ar$(EXE_EXT)
    PLATFORM_DEFINES += -DVITA
-   CFLAGS += -fno-optimize-sibling-calls
-   CXXFLAGS += -fno-optimize-sibling-calls
+   CFLAGS += -fno-optimize-sibling-calls -mcpu=cortex-a9 -mfpu=neon-fp16 -mfloat-abi=hard -ffast-math -fomit-frame-pointer
+   CXXFLAGS += -fno-optimize-sibling-calls -mcpu=cortex-a9 -mfpu=neon-fp16 -mfloat-abi=hard -ffast-math -fomit-frame-pointer
    EXTERNAL_ZLIB = 1
 	STATIC_LINKING = 1
 
@@ -323,8 +323,6 @@ CC_SYSTEM = gcc
 CXX_SYSTEM = g++
 
 BURN_BLACKLIST := $(FBA_BURNER_DIR)/un7z.cpp \
-	$(FBA_CPU_DIR)/sh2/mksh2.cpp \
-	$(FBA_CPU_DIR)/sh2/mksh2-x86.cpp \
 	$(FBA_CPU_DIR)/sh2/mksh2.cpp
 
 ifeq ($(HAVE_GRIFFIN), 1)
@@ -406,8 +404,13 @@ ifeq ($(DEBUG), 1)
 CFLAGS += -O0 -g
 CXXFLAGS += -O0 -g
 else
-CFLAGS += -O2 -DNDEBUG
-CXXFLAGS += -O2 -DNDEBUG
+   ifeq ($(platform), vita)
+      CFLAGS += -O3 -DNDEBUG
+      CXXFLAGS += -O3 -DNDEBUG
+   else
+      CFLAGS += -O2 -DNDEBUG
+      CXXFLAGS += -O2 -DNDEBUG
+   endif
 endif
 
 ifeq ($(platform), sncps3)

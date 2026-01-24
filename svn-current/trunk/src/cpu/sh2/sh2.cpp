@@ -36,7 +36,11 @@
 
 #define BUSY_LOOP_HACKS 	1
 #define FAST_OP_FETCH		1
-#define USE_JUMPTABLE		0
+#define USE_JUMPTABLE		1
+
+#if USE_JUMPTABLE
+static void sh2_init_jumptable(void);
+#endif
 
 #define SH2_INT_15		15
 
@@ -409,6 +413,10 @@ int Sh2Init(int nCount)
 	}
 	memset(Sh2Ext, 0, sizeof(SH2EXT) * nCount);
 
+#if USE_JUMPTABLE
+	sh2_init_jumptable();
+#endif
+
 	// init default memory handler
 	for (int i=0; i<nCount; i++) {
 		pSh2Ext = Sh2Ext + i;
@@ -704,11 +712,7 @@ do {											\
 } while(0)
 
 
-#if USE_JUMPTABLE
 
-	#include "sh2op.c"
-	
-#else
 
 /*  code                 cycles  t-bit
  *  0011 nnnn mmmm 1100  1       -
@@ -2630,7 +2634,10 @@ SH2_INLINE void op1111(UINT16 /*opcode*/)
 	NOP();
 }
 
-#endif	// USE_JUMPTABLE
+#if USE_JUMPTABLE
+// Include jump table after op functions are defined
+#include "sh2op.h"
+#endif
 
 /*****************************************************************************
  *  MAME CPU INTERFACE
@@ -3169,7 +3176,7 @@ int Sh2Run(int cycles)
 		case  6<<12: op0110(opcode); break;
 		case  7<<12: op0111(opcode); break;
 		case  8<<12: op1000(opcode); break;
-		case  9<<12: op1001(opcode); break;
+			case  9<<12: op1001(opcode); break;
 		case 10<<12: op1010(opcode); break;
 		case 11<<12: op1011(opcode); break;
 		case 12<<12: op1100(opcode); break;
@@ -3177,8 +3184,6 @@ int Sh2Run(int cycles)
 		case 14<<12: op1110(opcode); break;
 		default: op1111(opcode); break;
 		}
-
-#endif
 
 		if(sh2->test_irq && !sh2->delay)
 		{
@@ -3217,6 +3222,9 @@ int Sh2Run(int cycles)
 
 	return cycles - sh2->sh2_icount;
 }
+
+#endif
+
 
 void Sh2SetIRQLine(const int line, const int state)
 {

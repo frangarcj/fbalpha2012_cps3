@@ -23,6 +23,33 @@ Port to FBA by OopsWare
 #define BE_GFX	1
 #define SPEED_HACK 1 // Default should be 1, if not FPS would drop.
 
+// Performance profiling overlay - set to 1 to enable on-screen stats
+#define CPS3_PERF_OVERLAY 1
+
+#if CPS3_PERF_OVERLAY
+#include <time.h>
+#ifdef VITA
+#include <psp2/kernel/processmgr.h>
+#define GET_TIME_US() (sceKernelGetProcessTimeWide())
+#else
+static inline UINT64 GET_TIME_US(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (UINT64)ts.tv_sec * 1000000ULL + ts.tv_nsec / 1000ULL;
+}
+#endif
+
+static UINT64 perf_cpu_time_us = 0;
+static UINT64 perf_draw_time_us = 0;
+static UINT64 perf_avg_cpu_us = 0;  // Average CPU time
+static UINT64 perf_avg_draw_us = 0; // Average Draw time
+static UINT64 perf_frame_time_us = 0;
+static UINT64 perf_frame_start = 0;
+static UINT32 perf_frame_count = 0;
+static UINT64 perf_avg_frame_us = 16667; // Start at 60fps assumption
+#endif
+
+
 #ifdef WII_VM
 #include "libretro.h"
 #include "wii_vm.h"
@@ -1256,6 +1283,143 @@ INT32 cps3Exit(void)
 	return 0;
 }
 
+// ============================================================
+// Performance Profiling Overlay
+// ============================================================
+#if CPS3_PERF_OVERLAY
+
+// Simple 5x7 bitmap font for digits and labels
+static const UINT8 perf_font_5x7[24][7] = {
+    {0x0E,0x11,0x13,0x15,0x19,0x11,0x0E}, // 0 (0)
+    {0x04,0x0C,0x04,0x04,0x04,0x04,0x0E}, // 1 (1)
+    {0x0E,0x11,0x01,0x06,0x08,0x10,0x1F}, // 2 (2)
+    {0x0E,0x11,0x01,0x06,0x01,0x11,0x0E}, // 3 (3)
+    {0x02,0x06,0x0A,0x12,0x1F,0x02,0x02}, // 4 (4)
+    {0x1F,0x10,0x1E,0x01,0x01,0x11,0x0E}, // 5 (5)
+    {0x06,0x08,0x10,0x1E,0x11,0x11,0x0E}, // 6 (6)
+    {0x1F,0x01,0x02,0x04,0x08,0x08,0x08}, // 7 (7)
+    {0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E}, // 8 (8)
+    {0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C}, // 9 (9)
+    {0x00,0x00,0x00,0x00,0x00,0x00,0x00}, // space (10)
+    {0x00,0x00,0x00,0x00,0x00,0x0C,0x0C}, // . (11)
+    {0x0E,0x11,0x10,0x10,0x10,0x11,0x0E}, // C (12)
+    {0x1E,0x11,0x11,0x1E,0x10,0x10,0x10}, // P (13)
+    {0x11,0x11,0x11,0x11,0x11,0x11,0x0E}, // U (14)
+    {0x1E,0x11,0x11,0x11,0x11,0x11,0x1E}, // D (15)
+    {0x1E,0x11,0x11,0x1E,0x14,0x12,0x11}, // R (16)
+    {0x11,0x11,0x11,0x15,0x15,0x1B,0x11}, // W (17)
+    {0x1F,0x10,0x10,0x1E,0x10,0x10,0x10}, // F (18)
+    {0x11,0x1B,0x15,0x15,0x11,0x11,0x11}, // M (19)
+    {0x00,0x00,0x04,0x04,0x1F,0x04,0x04}, // + (20)
+    {0x00,0x04,0x04,0x00,0x04,0x04,0x00}, // : (21)
+};
+
+static void perf_draw_char(UINT16 *fb, INT32 x, INT32 y, INT32 ch, UINT16 color, INT32 pitch)
+{
+    INT32 idx = 10; // default space
+    if (ch >= '0' && ch <= '9') idx = ch - '0';
+    else if (ch == ' ') idx = 10;
+    else if (ch == '.') idx = 11;
+    else if (ch == ':') idx = 21;
+    else if (ch == 'C') idx = 12;
+    else if (ch == 'P') idx = 13;
+    else if (ch == 'U') idx = 14;
+    else if (ch == 'D') idx = 15;
+    else if (ch == 'R') idx = 16;
+    else if (ch == 'W') idx = 17;
+    else if (ch == 'F') idx = 18;
+    else if (ch == 'M') idx = 19;
+    
+    const UINT8 *glyph = perf_font_5x7[idx];
+    for (INT32 row = 0; row < 7; row++) {
+        UINT8 bits = glyph[row];
+        for (INT32 col = 0; col < 5; col++) {
+            if (bits & (0x10 >> col)) {
+                INT32 px = x + col;
+                INT32 py = y + row;
+                if (px >= 0 && px < pitch && py >= 0 && py < 224) {
+                    fb[py * pitch + px] = color;
+                }
+            }
+        }
+    }
+}
+
+
+static void perf_draw_string(UINT16 *fb, INT32 x, INT32 y, const char *str, UINT16 color, INT32 pitch)
+{
+    while (*str) {
+        perf_draw_char(fb, x, y, *str, color, pitch);
+        x += 6; // 5 pixels + 1 spacing
+        str++;
+    }
+}
+
+static void perf_draw_number(UINT16 *fb, INT32 x, INT32 y, UINT32 num, UINT16 color, INT32 pitch)
+{
+    char buf[16];
+    INT32 i = 0;
+    if (num == 0) {
+        buf[i++] = '0';
+    } else {
+        while (num > 0 && i < 15) {
+            buf[i++] = '0' + (num % 10);
+            num /= 10;
+        }
+    }
+    // Reverse
+    for (INT32 j = i - 1; j >= 0; j--) {
+        perf_draw_char(fb, x, y, buf[j], color, pitch);
+        x += 6;
+    }
+}
+
+static void draw_perf_overlay(void)
+{
+    if (!pBurnDraw) return;
+    
+    UINT16 *fb = (UINT16 *)pBurnDraw;
+    INT32 pitch = cps3_gfx_width;
+    
+    // Colors in RGB565
+    UINT16 bg_color = 0x0000;    // Black
+    UINT16 text_color = 0x07E0;  // Green
+    UINT16 warn_color = 0xFFE0;  // Yellow
+    UINT16 bad_color = 0xF800;   // Red
+    
+    // Draw background bar (semi-transparent effect via dithering)
+    for (INT32 y = 0; y < 32; y++) {
+        for (INT32 x = 0; x < 160; x++) {
+            if ((x + y) & 1) {
+                fb[y * pitch + x] = bg_color;
+            }
+        }
+    }
+    
+    // Choose color based on performance
+    UINT16 frame_color = text_color;
+    if (perf_avg_frame_us > 16667) frame_color = warn_color;  // Below 60fps
+    if (perf_avg_frame_us > 20000) frame_color = bad_color;   // Below 50fps
+    
+    // Line 1: "CPU: XXXX us"
+    perf_draw_string(fb, 2, 2, "CPU:", text_color, pitch);
+    perf_draw_number(fb, 28, 2, (UINT32)perf_avg_cpu_us, text_color, pitch);
+    
+    // Line 2: "DRW: XXXX us"  
+    perf_draw_string(fb, 2, 11, "DRW:", text_color, pitch);
+    perf_draw_number(fb, 28, 11, (UINT32)perf_avg_draw_us, text_color, pitch);
+    
+    // Line 3: "FRM: XXXX us" (total frame time with color coding)
+    perf_draw_string(fb, 2, 20, "FRM:", text_color, pitch);
+    perf_draw_number(fb, 28, 20, (UINT32)perf_avg_frame_us, frame_color, pitch);
+    
+    // Also show target: 16667us = 60fps
+    perf_draw_string(fb, 90, 20, ":16667", text_color, pitch);
+}
+
+#endif // CPS3_PERF_OVERLAY
+
+
 static void cps3_drawgfxzoom_0(UINT32 code, UINT32 pal, INT32 flipx, INT32 flipy, INT32 x, INT32 y)
 {
 	if ((x > (cps3_gfx_width - 8)) || (y > (cps3_gfx_height - 8))) return;
@@ -1989,6 +2153,11 @@ static INT32 cps_int10_cnt = 0;
 
 INT32 cps3Frame(void)
 {
+#if CPS3_PERF_OVERLAY
+	UINT64 frame_start = GET_TIME_US();
+	UINT64 cpu_start, cpu_end, draw_start, draw_end;
+#endif
+
 	if (cps3_reset)
 		Cps3Reset();
 		
@@ -2031,6 +2200,10 @@ INT32 cps3Frame(void)
 	Cps3ClearOpposites(&Cps3Input[0]);
 	Cps3ClearOpposites(&Cps3Input[1]);
 
+#if CPS3_PERF_OVERLAY
+	cpu_start = GET_TIME_US();
+#endif
+
 	for (INT32 i=0; i<4; i++)
 	{
 		Sh2Run(6250000 * 4 / 60 / 4);
@@ -2045,12 +2218,39 @@ INT32 cps3Frame(void)
 	}
 	Sh2SetIRQLine(12, SH2_IRQSTATUS_AUTO);
 
+#if CPS3_PERF_OVERLAY
+	cpu_end = GET_TIME_US();
+	perf_cpu_time_us = cpu_end - cpu_start;
+#endif
+
 	cps3SndUpdate();
 	
+#if CPS3_PERF_OVERLAY
+	draw_start = GET_TIME_US();
+#endif
+
 	if (pBurnDraw) DrvDraw();
+
+#if CPS3_PERF_OVERLAY
+	draw_end = GET_TIME_US();
+	perf_draw_time_us = draw_end - draw_start;
+	
+	// Calculate total frame time
+	perf_frame_time_us = GET_TIME_US() - frame_start;
+	
+	// Moving averages (87.5% old + 12.5% new) for smoother display
+	perf_avg_cpu_us = (perf_avg_cpu_us * 7 + perf_cpu_time_us) / 8;
+	perf_avg_draw_us = (perf_avg_draw_us * 7 + perf_draw_time_us) / 8;
+	perf_avg_frame_us = (perf_avg_frame_us * 7 + perf_frame_time_us) / 8;
+	perf_frame_count++;
+	
+	// Draw overlay on top of the frame
+	if (pBurnDraw) draw_perf_overlay();
+#endif
 
 	return 0;
 }
+
 
 INT32 cps3Scan(INT32 nAction, INT32 *pnMin)
 {
