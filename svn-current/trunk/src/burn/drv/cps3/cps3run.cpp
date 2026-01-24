@@ -1782,6 +1782,11 @@ static void cps3_drawgfxzoom_2(UINT32 code, UINT32 pal, INT32 flipx, INT32 flipy
                       cps3_drawgfxzoom_2_neon_opaque(source + (x_index_base >> 16), dest + sx, ex - sx, pal);
                       y_index += dy;
                       continue;
+                  } else {
+                      // NEON path for Zoom (Manual Gather)
+                      cps3_drawgfxzoom_2_neon_zoom_opaque(source, dest + sx, ex - sx, pal, x_index_base, dx);
+                      y_index += dy;
+                      continue;
                   }
                   #endif
                   
