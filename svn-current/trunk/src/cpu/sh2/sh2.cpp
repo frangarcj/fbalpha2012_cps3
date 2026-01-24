@@ -535,7 +535,7 @@ SH2_INLINE UINT8 RB(UINT32 A)
 	
 	unsigned char * pr;
 	pr = pSh2Ext->MemMap[ A >> SH2_SHIFT ];
-	if ( (uintptr_t)pr >= SH2_MAXHANDLER ) {
+	if (__builtin_expect((uintptr_t)pr >= SH2_MAXHANDLER, 1)) {
 #ifndef MSB_FIRST
 		A ^= 3;
 #endif
@@ -553,7 +553,7 @@ SH2_INLINE UINT16 RW(UINT32 A)
 	
 	unsigned char * pr;
 	pr = pSh2Ext->MemMap[ A >> SH2_SHIFT ];
-	if ( (uintptr_t)pr >= SH2_MAXHANDLER ) {
+	if (__builtin_expect((uintptr_t)pr >= SH2_MAXHANDLER, 1)) {
 #ifndef MSB_FIRST
 		A ^= 2;
 #endif
@@ -568,7 +568,7 @@ SH2_INLINE UINT16 OPRW(UINT32 A)
 
 	unsigned char * pr;
 	pr = pSh2Ext->MemMap[ (A >> SH2_SHIFT) + SH2_WADD * 2 ];
-	if ( (uintptr_t)pr >= SH2_MAXHANDLER ) {
+	if (__builtin_expect((uintptr_t)pr >= SH2_MAXHANDLER, 1)) {
 #ifndef MSB_FIRST
 		A ^= 2;
 #endif
@@ -587,7 +587,7 @@ SH2_INLINE UINT32 RL(UINT32 A)
 	
 	unsigned char * pr;
 	pr = pSh2Ext->MemMap[ A >> SH2_SHIFT ];
-	if ( (uintptr_t)pr >= SH2_MAXHANDLER ) {
+	if (__builtin_expect((uintptr_t)pr >= SH2_MAXHANDLER, 1)) {
 		//return (pr[(A & SH2_PAGEM) + 0] << 24) | (pr[(A & SH2_PAGEM) + 1] << 16) | (pr[(A & SH2_PAGEM) + 2] <<  8) | (pr[(A & SH2_PAGEM) + 3] <<  0);
 		return *((unsigned int *)(pr + (A & SH2_PAGEM)));
 	}
@@ -603,7 +603,7 @@ SH2_INLINE void WB(UINT32 A, UINT8 V)
 	
 	unsigned char* pr;
 	pr = pSh2Ext->MemMap[(A >> SH2_SHIFT) + SH2_WADD];
-	if ((uintptr_t)pr >= SH2_MAXHANDLER) {
+	if (__builtin_expect((uintptr_t)pr >= SH2_MAXHANDLER, 1)) {
 #ifndef MSB_FIRST
 		A ^= 3;
 #endif
@@ -622,7 +622,7 @@ SH2_INLINE void WW(UINT32 A, UINT16 V)
 
 	unsigned char * pr;
 	pr = pSh2Ext->MemMap[(A >> SH2_SHIFT) + SH2_WADD];
-	if ((uintptr_t)pr >= SH2_MAXHANDLER) {
+	if (__builtin_expect((uintptr_t)pr >= SH2_MAXHANDLER, 1)) {
 #ifndef MSB_FIRST
 		A ^= 2;
 #endif
@@ -640,7 +640,7 @@ SH2_INLINE void WL(UINT32 A, UINT32 V)
 	program_write_dword_32be(A & AM,V); */
 	unsigned char * pr;
 	pr = pSh2Ext->MemMap[(A >> SH2_SHIFT) + SH2_WADD];
-	if ((uintptr_t)pr >= SH2_MAXHANDLER) {
+	if (__builtin_expect((uintptr_t)pr >= SH2_MAXHANDLER, 1)) {
 		*((unsigned int *)(pr + (A & SH2_PAGEM))) = (unsigned int)V;
 		return;
 	}
