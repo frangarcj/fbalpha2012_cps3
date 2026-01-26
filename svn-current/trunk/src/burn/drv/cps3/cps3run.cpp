@@ -20,7 +20,7 @@ Port to FBA by OopsWare
 #include "cps3.h"
 #include "sh2_intf.h"
 
-#define BE_GFX	1
+#define BE_GFX 1
 #define SPEED_HACK 1 // Default should be 1, if not FPS would drop.
 
 // Performance profiling overlay - set to 1 to enable on-screen stats
@@ -32,25 +32,24 @@ Port to FBA by OopsWare
 #include <psp2/kernel/processmgr.h>
 #define GET_TIME_US() (sceKernelGetProcessTimeWide())
 #else
-static inline UINT64 GET_TIME_US(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (UINT64)ts.tv_sec * 1000000ULL + ts.tv_nsec / 1000ULL;
+static inline UINT64 GET_TIME_US(void)
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (UINT64)ts.tv_sec * 1000000ULL + ts.tv_nsec / 1000ULL;
 }
 #endif
 #include "cps3neon.h" // Include NEON optimized functions
 
-
 static UINT64 perf_cpu_time_us = 0;
 static UINT64 perf_draw_time_us = 0;
-static UINT64 perf_avg_cpu_us = 0;  // Average CPU time
+static UINT64 perf_avg_cpu_us = 0;	// Average CPU time
 static UINT64 perf_avg_draw_us = 0; // Average Draw time
 static UINT64 perf_frame_time_us = 0;
 static UINT64 perf_frame_start = 0;
 static UINT32 perf_frame_count = 0;
 static UINT64 perf_avg_frame_us = 16667; // Start at 60fps assumption
 #endif
-
 
 #ifdef WII_VM
 #include "libretro.h"
@@ -124,19 +123,19 @@ static INT32 cps3_gfx_max_x, cps3_gfx_max_y;
 
 enum
 {
-	FM_NORMAL = 0,	// normal read/write
-	FM_READID,	// read ID
-	FM_READSTATUS,	// read status
-	FM_WRITEPART1,	// first half of programming, awaiting second
-	FM_CLEARPART1,	// first half of clear, awaiting second
-	FM_SETMASTER,	// first half of set master lock, awaiting on/off
-	FM_READAMDID1,	// part 1 of alt ID sequence
-	FM_READAMDID2,	// part 2 of alt ID sequence
-	FM_READAMDID3,	// part 3 of alt ID sequence
-	FM_ERASEAMD1,	// part 1 of AMD erase sequence
-	FM_ERASEAMD2,	// part 2 of AMD erase sequence
-	FM_ERASEAMD3,	// part 3 of AMD erase sequence
-	FM_ERASEAMD4,	// part 4 of AMD erase sequence
+	FM_NORMAL = 0, // normal read/write
+	FM_READID,	   // read ID
+	FM_READSTATUS, // read status
+	FM_WRITEPART1, // first half of programming, awaiting second
+	FM_CLEARPART1, // first half of clear, awaiting second
+	FM_SETMASTER,  // first half of set master lock, awaiting on/off
+	FM_READAMDID1, // part 1 of alt ID sequence
+	FM_READAMDID2, // part 2 of alt ID sequence
+	FM_READAMDID3, // part 3 of alt ID sequence
+	FM_ERASEAMD1,  // part 1 of AMD erase sequence
+	FM_ERASEAMD2,  // part 2 of AMD erase sequence
+	FM_ERASEAMD3,  // part 3 of AMD erase sequence
+	FM_ERASEAMD4,  // part 4 of AMD erase sequence
 	FM_BYTEPROGRAM
 };
 
@@ -149,105 +148,105 @@ typedef struct
 
 static flash_chip main_flash;
 
-void cps3_flash_init(flash_chip * chip/*, void *data*/)
+void cps3_flash_init(flash_chip *chip /*, void *data*/)
 {
 	memset(chip, 0, sizeof(flash_chip));
-	chip->status            = 0x80;
-	chip->flash_mode        = FM_NORMAL;
+	chip->status = 0x80;
+	chip->flash_mode = FM_NORMAL;
 	chip->flash_master_lock = 0;
 }
 
-UINT32 cps3_flash_read(flash_chip * chip, UINT32 addr)
+UINT32 cps3_flash_read(flash_chip *chip, UINT32 addr)
 {
-   switch (chip->flash_mode)
-   {
-      case FM_READAMDID3:
-      case FM_READID:
-         switch (addr & 0x7fffff)
-         {
-            case 0:
-               return 0x04040404;
-            case 4:
-               return 0xadadadad;
-            case 8:
-               return 0x00000000;
-         }
-         break;
-      case FM_ERASEAMD4:
-         chip->status ^= ( 1 << 6 ) | ( 1 << 2 );
-         /* fall-through */
-      case FM_READSTATUS:
-         return (chip->status << 0) | (chip->status << 8) | (chip->status << 16) | (chip->status << 24);
-      case FM_NORMAL:
-      default:
-         break;
-   }
-   return 0;
+	switch (chip->flash_mode)
+	{
+	case FM_READAMDID3:
+	case FM_READID:
+		switch (addr & 0x7fffff)
+		{
+		case 0:
+			return 0x04040404;
+		case 4:
+			return 0xadadadad;
+		case 8:
+			return 0x00000000;
+		}
+		break;
+	case FM_ERASEAMD4:
+		chip->status ^= (1 << 6) | (1 << 2);
+		/* fall-through */
+	case FM_READSTATUS:
+		return (chip->status << 0) | (chip->status << 8) | (chip->status << 16) | (chip->status << 24);
+	case FM_NORMAL:
+	default:
+		break;
+	}
+	return 0;
 }
 
-void cps3_flash_write(flash_chip * chip, UINT32 addr, UINT32 data)
+void cps3_flash_write(flash_chip *chip, UINT32 addr, UINT32 data)
 {
-	switch( chip->flash_mode )
-   {
-      case FM_NORMAL:
-      case FM_READSTATUS:
-      case FM_READID:
-      case FM_READAMDID3:
-         switch( data & 0xff )
-         {
-            case 0xf0:
-            case 0xff:
-               chip->flash_mode = FM_NORMAL;
-               break;
-            case 0x90:
-               chip->flash_mode = FM_READID;
-               break;
-            case 0x40:
-            case 0x10:
-               chip->flash_mode = FM_WRITEPART1;
-               break;
-            case 0x50:
-               // clear status reg
-               chip->status     = 0x80;
-               chip->flash_mode = FM_READSTATUS;
-               break;
-            case 0x20:
-               chip->flash_mode = FM_CLEARPART1;
-               break;
-            case 0x60:
-               chip->flash_mode = FM_SETMASTER;
-               break;
-            case 0x70:
-               chip->flash_mode = FM_READSTATUS;
-               break;
-            case 0xaa:	// AMD ID select part 1
-               if ((addr & 0xffff) == (0x555 << 2))
-                  chip->flash_mode = FM_READAMDID1;
-               break;
-            default:
-               break;
-         }
-         break;
-      case FM_READAMDID1:
-         if ((addr & 0xffff) == (0x2aa <<2) && (data & 0xff) == 0x55 )
-            chip->flash_mode = FM_READAMDID2;
-         else
-            chip->flash_mode = FM_NORMAL;
-         break;
-      case FM_READAMDID2:
-         if ((addr & 0xffff) == (0x555<<2) && (data & 0xff) == 0x90)
-            chip->flash_mode = FM_READAMDID3;
-         else if((addr & 0xffff) == (0x555<<2) && (data & 0xff) == 0x80)
-            chip->flash_mode = FM_ERASEAMD1;
-         else if((addr & 0xffff) == (0x555<<2) && (data & 0xff) == 0xa0)
-            chip->flash_mode = FM_BYTEPROGRAM;
-         else
-            chip->flash_mode = FM_NORMAL;
-         break;				
-   }
+	switch (chip->flash_mode)
+	{
+	case FM_NORMAL:
+	case FM_READSTATUS:
+	case FM_READID:
+	case FM_READAMDID3:
+		switch (data & 0xff)
+		{
+		case 0xf0:
+		case 0xff:
+			chip->flash_mode = FM_NORMAL;
+			break;
+		case 0x90:
+			chip->flash_mode = FM_READID;
+			break;
+		case 0x40:
+		case 0x10:
+			chip->flash_mode = FM_WRITEPART1;
+			break;
+		case 0x50:
+			// clear status reg
+			chip->status = 0x80;
+			chip->flash_mode = FM_READSTATUS;
+			break;
+		case 0x20:
+			chip->flash_mode = FM_CLEARPART1;
+			break;
+		case 0x60:
+			chip->flash_mode = FM_SETMASTER;
+			break;
+		case 0x70:
+			chip->flash_mode = FM_READSTATUS;
+			break;
+		case 0xaa: // AMD ID select part 1
+			if ((addr & 0xffff) == (0x555 << 2))
+				chip->flash_mode = FM_READAMDID1;
+			break;
+		default:
+			break;
+		}
+		break;
+	case FM_READAMDID1:
+		if ((addr & 0xffff) == (0x2aa << 2) && (data & 0xff) == 0x55)
+			chip->flash_mode = FM_READAMDID2;
+		else
+			chip->flash_mode = FM_NORMAL;
+		break;
+	case FM_READAMDID2:
+		if ((addr & 0xffff) == (0x555 << 2) && (data & 0xff) == 0x90)
+			chip->flash_mode = FM_READAMDID3;
+		else if ((addr & 0xffff) == (0x555 << 2) && (data & 0xff) == 0x80)
+			chip->flash_mode = FM_ERASEAMD1;
+		else if ((addr & 0xffff) == (0x555 << 2) && (data & 0xff) == 0xa0)
+			chip->flash_mode = FM_BYTEPROGRAM;
+		else
+			chip->flash_mode = FM_NORMAL;
+		break;
+	}
 }
 
-inline static void Cps3ClearOpposites(UINT16* nJoystickInputs)
+inline static void Cps3ClearOpposites(UINT16 *nJoystickInputs)
 {
 	if ((*nJoystickInputs & 0x03) == 0x03)
 		*nJoystickInputs &= ~0x03;
@@ -259,13 +258,13 @@ inline static void Cps3ClearOpposites(UINT16* nJoystickInputs)
 
 static UINT16 rotate_left(UINT16 value, INT32 n)
 {
-   INT32 aux = value >> (16 - n);
-   return ((value << n) | aux) & 0xffff;
+	INT32 aux = value >> (16 - n);
+	return ((value << n) | aux) & 0xffff;
 }
 
 static UINT16 rotxor(UINT16 val, UINT16 x)
 {
-	UINT16 res = val + rotate_left(val,2);
+	UINT16 res = val + rotate_left(val, 2);
 	return rotate_left(res, 4) ^ (res & (val ^ x));
 }
 
@@ -283,108 +282,108 @@ static UINT32 cps3_mask(UINT32 address, UINT32 key1, UINT32 key2)
 
 static void cps3_decrypt_bios(void)
 {
-	UINT32 * coderegion = (UINT32 *)RomBios;
-	for (INT32 i=0; i<0x20000; i+=4)
-   {
+	UINT32 *coderegion = (UINT32 *)RomBios;
+	for (INT32 i = 0; i < 0x20000; i += 4)
+	{
 		UINT32 xormask = cps3_mask(i, cps3_key1, cps3_key2);
 		/* a bit of a hack, don't decrypt the FLASH commands which are transfered by SH2 DMA */
-		if ((i<0x1ff00) || (i>0x1ff6b))
-			coderegion[i/4] ^= xormask;
+		if ((i < 0x1ff00) || (i > 0x1ff6b))
+			coderegion[i / 4] ^= xormask;
 	}
 }
 
 static void cps3_decrypt_game(void)
 {
-	UINT32 * coderegion         = (UINT32 *)RomGame;
-	UINT32 * decrypt_coderegion = (UINT32 *)RomGame_D;
-	
-	for (INT32 i=0; i<0x1000000; i+=4)
-   {
-		UINT32 xormask           = cps3_mask(i + 0x06000000, cps3_key1, cps3_key2);
-		decrypt_coderegion[i/4]  = coderegion[i/4] ^ xormask;
+	UINT32 *coderegion = (UINT32 *)RomGame;
+	UINT32 *decrypt_coderegion = (UINT32 *)RomGame_D;
+
+	for (INT32 i = 0; i < 0x1000000; i += 4)
+	{
+		UINT32 xormask = cps3_mask(i + 0x06000000, cps3_key1, cps3_key2);
+		decrypt_coderegion[i / 4] = coderegion[i / 4] ^ xormask;
 	}
 }
 
 static INT32 last_normal_byte = 0;
 
-static UINT32 process_byte( UINT8 real_byte, UINT32 destination, INT32 max_length )
+static UINT32 process_byte(UINT8 real_byte, UINT32 destination, INT32 max_length)
 {
-   UINT8 * dest = (UINT8 *) RamCRam;
-   destination &= 0x7fffff;
+	UINT8 *dest = (UINT8 *)RamCRam;
+	destination &= 0x7fffff;
 
-   if (real_byte&0x40)
-   {
-      INT32 tranfercount    = 0;
-      INT32 cps3_rle_length = (real_byte&0x3f)+1;
-      while (cps3_rle_length)
-      {
+	if (real_byte & 0x40)
+	{
+		INT32 tranfercount = 0;
+		INT32 cps3_rle_length = (real_byte & 0x3f) + 1;
+		while (cps3_rle_length)
+		{
 #if BE_GFX
-         dest[((destination+tranfercount)&0x7fffff)]   = (last_normal_byte&0x3f);
+			dest[((destination + tranfercount) & 0x7fffff)] = (last_normal_byte & 0x3f);
 #else
-         dest[((destination+tranfercount)&0x7fffff)^3] = (last_normal_byte&0x3f);
+			dest[((destination + tranfercount) & 0x7fffff) ^ 3] = (last_normal_byte & 0x3f);
 #endif
-         tranfercount++;
-         cps3_rle_length--;
-         max_length--;
-         if ((destination+tranfercount) > 0x7fffff)
-            return max_length;
-      }
-      return tranfercount;
-   }
+			tranfercount++;
+			cps3_rle_length--;
+			max_length--;
+			if ((destination + tranfercount) > 0x7fffff)
+				return max_length;
+		}
+		return tranfercount;
+	}
 #if BE_GFX
-   dest[(destination&0x7fffff)]   = real_byte;
+	dest[(destination & 0x7fffff)] = real_byte;
 #else
-   dest[(destination&0x7fffff)^3] = real_byte;
+	dest[(destination & 0x7fffff) ^ 3] = real_byte;
 #endif
-   last_normal_byte = real_byte;
-   return 1;
+	last_normal_byte = real_byte;
+	return 1;
 }
 
 static void cps3_do_char_dma(
-      UINT32 real_source, UINT32 real_destination, UINT32 real_length )
+	UINT32 real_source, UINT32 real_destination, UINT32 real_length)
 {
-	UINT8 * sourcedata     = RomUser;
+	UINT8 *sourcedata = RomUser;
 	INT32 length_remaining = real_length;
-	last_normal_byte       = 0;
+	last_normal_byte = 0;
 	while (length_remaining)
 	{
-		UINT8 current_byte  = sourcedata[ real_source ^ 0 ];
+		UINT8 current_byte = sourcedata[real_source ^ 0];
 		real_source++;
 
 		if (current_byte & 0x80)
-      {
-         UINT8 real_byte;
-         UINT32 length_processed;
-         current_byte &= 0x7f;
+		{
+			UINT8 real_byte;
+			UINT32 length_processed;
+			current_byte &= 0x7f;
 
-         real_byte         = sourcedata[ (chardma_table_address+current_byte*2+0) ^ 0 ];
-         length_processed  = process_byte( real_byte, real_destination, length_remaining );
-         length_remaining -= length_processed; // subtract the number of bytes the operation has taken
-         real_destination += length_processed; // add it onto the destination
-         if (real_destination>0x7fffff)
-            return;
-         if (length_remaining<=0)
-            return; // if we've expired, exit
+			real_byte = sourcedata[(chardma_table_address + current_byte * 2 + 0) ^ 0];
+			length_processed = process_byte(real_byte, real_destination, length_remaining);
+			length_remaining -= length_processed; // subtract the number of bytes the operation has taken
+			real_destination += length_processed; // add it onto the destination
+			if (real_destination > 0x7fffff)
+				return;
+			if (length_remaining <= 0)
+				return; // if we've expired, exit
 
-         real_byte = sourcedata[ (chardma_table_address+current_byte*2+1) ^ 0 ];
-         length_processed = process_byte( real_byte, real_destination, length_remaining );
-         length_remaining -= length_processed; // subtract the number of bytes the operation has taken
-         real_destination += length_processed; // add it onto the destination
-         if (real_destination>0x7fffff)
-            return;
-         if (length_remaining<=0)
-            return;  // if we've expired, exit
-      }
+			real_byte = sourcedata[(chardma_table_address + current_byte * 2 + 1) ^ 0];
+			length_processed = process_byte(real_byte, real_destination, length_remaining);
+			length_remaining -= length_processed; // subtract the number of bytes the operation has taken
+			real_destination += length_processed; // add it onto the destination
+			if (real_destination > 0x7fffff)
+				return;
+			if (length_remaining <= 0)
+				return; // if we've expired, exit
+		}
 		else
 		{
 			UINT32 length_processed;
-			length_processed = process_byte( current_byte, real_destination, length_remaining );
+			length_processed = process_byte(current_byte, real_destination, length_remaining);
 			length_remaining -= length_processed; // subtract the number of bytes the operation has taken
 			real_destination += length_processed; // add it onto the destination
-			if (real_destination>0x7fffff)
+			if (real_destination > 0x7fffff)
 				return;
-			if (length_remaining<=0)
-				return;  // if we've expired, exit
+			if (length_remaining <= 0)
+				return; // if we've expired, exit
 		}
 	}
 }
@@ -394,161 +393,169 @@ static UINT16 lastb2;
 
 static UINT32 ProcessByte8(UINT8 b, UINT32 dst_offset)
 {
-	UINT8 * destRAM = (UINT8 *) RamCRam;
- 	INT32 l=0;
+	UINT8 *destRAM = (UINT8 *)RamCRam;
+	INT32 l = 0;
 
- 	if(lastb==lastb2) /* RLE */
+	if (lastb == lastb2) /* RLE */
 	{
- 		INT32 rle=(b+1)&0xff;
+		INT32 rle = (b + 1) & 0xff;
 
- 		for(INT32 i=0;i<rle;++i)
+		for (INT32 i = 0; i < rle; ++i)
 		{
 #if BE_GFX
-			destRAM[(dst_offset&0x7fffff)] = lastb;
+			destRAM[(dst_offset & 0x7fffff)] = lastb;
 #else
-			destRAM[(dst_offset&0x7fffff)^3] = lastb;
+			destRAM[(dst_offset & 0x7fffff) ^ 3] = lastb;
 #endif
 			dst_offset++;
- 			++l;
- 		}
- 		lastb2=0xffff;
- 	}
+			++l;
+		}
+		lastb2 = 0xffff;
+	}
 	else
 	{
- 		lastb2=lastb;
- 		lastb=b;
+		lastb2 = lastb;
+		lastb = b;
 #if BE_GFX
-		destRAM[(dst_offset&0x7fffff)] = b;
+		destRAM[(dst_offset & 0x7fffff)] = b;
 #else
-		destRAM[(dst_offset&0x7fffff)^3] = b;
+		destRAM[(dst_offset & 0x7fffff) ^ 3] = b;
 #endif
- 	}
+	}
 	return 1;
 }
 
 static void cps3_do_alt_char_dma(
-      UINT32 src, UINT32 real_dest, UINT32 real_length )
+	UINT32 src, UINT32 real_dest, UINT32 real_length)
 {
-   UINT8 * px   = RomUser;
-   UINT32 start = real_dest;
-   UINT32 ds    = real_dest;
+	UINT8 *px = RomUser;
+	UINT32 start = real_dest;
+	UINT32 ds = real_dest;
 
-   lastb=0xfffe;
-   lastb2=0xffff;
+	lastb = 0xfffe;
+	lastb2 = 0xffff;
 
-   for(;;)
-   {
-      UINT8 ctrl=px[ src ^ 0 ];
-      ++src;
+	for (;;)
+	{
+		UINT8 ctrl = px[src ^ 0];
+		++src;
 
-      for(INT32 i=0;i<8;++i)
-      {
-         UINT8 p = px[ src ^ 0 ];
+		for (INT32 i = 0; i < 8; ++i)
+		{
+			UINT8 p = px[src ^ 0];
 
-         if(ctrl&0x80)
-         {
-            UINT8 real_byte;
-            p &= 0x7f;
-            real_byte = px[ (chardma_table_address+p*2+0) ^ 0 ];
-            ds += ProcessByte8(real_byte,ds);
-            real_byte = px[ (chardma_table_address+p*2+1) ^ 0 ];
-            ds += ProcessByte8(real_byte,ds);
-         }
-         else
-            ds += ProcessByte8(p,ds);
-         ++src;
-         ctrl<<=1;
+			if (ctrl & 0x80)
+			{
+				UINT8 real_byte;
+				p &= 0x7f;
+				real_byte = px[(chardma_table_address + p * 2 + 0) ^ 0];
+				ds += ProcessByte8(real_byte, ds);
+				real_byte = px[(chardma_table_address + p * 2 + 1) ^ 0];
+				ds += ProcessByte8(real_byte, ds);
+			}
+			else
+				ds += ProcessByte8(p, ds);
+			++src;
+			ctrl <<= 1;
 
-         if((ds-start)>=real_length)
-            return;
-      }
-   }
+			if ((ds - start) >= real_length)
+				return;
+		}
+	}
 }
 
 static void cps3_process_character_dma(UINT32 address)
 {
-	for (INT32 i=0; i<0x1000; i+=3)
+	for (INT32 i = 0; i < 0x1000; i += 3)
 	{
-		UINT32 dat1             = RamCRam[i+0+(address)];
-		UINT32 dat2             = RamCRam[i+1+(address)];
-		UINT32 dat3             = RamCRam[i+2+(address)];
-		UINT32 real_source      = (dat3<<1)-0x400000;
-		UINT32 real_destination =  dat2<<3;
-		UINT32 real_length      = (((dat1&0x001fffff)+1)<<3);
-		
+		UINT32 dat1 = RamCRam[i + 0 + (address)];
+		UINT32 dat2 = RamCRam[i + 1 + (address)];
+		UINT32 dat3 = RamCRam[i + 2 + (address)];
+		UINT32 real_source = (dat3 << 1) - 0x400000;
+		UINT32 real_destination = dat2 << 3;
+		UINT32 real_length = (((dat1 & 0x001fffff) + 1) << 3);
+
 		if (dat1 == 0x01000000)
-         break;	// end of list marker
+			break; // end of list marker
 		if (dat1 == 0x13131313)
-         break;	// our default fill
-		
-		switch ( dat1 & 0x00e00000 )
-      {
-         case 0x00800000:
-            chardma_table_address = real_source;
-            Sh2SetIRQLine(10, SH2_IRQSTATUS_AUTO);
-            break;
-         case 0x00400000:
-            cps3_do_char_dma( real_source, real_destination, real_length );
-            Sh2SetIRQLine(10, SH2_IRQSTATUS_AUTO);
-            break;
-         case 0x00600000:
-            /* 8bpp DMA decompression
-               - this is used on SFIII NG Sean's Stage ONLY */
-            cps3_do_alt_char_dma( real_source, real_destination, real_length );
-            Sh2SetIRQLine(10, SH2_IRQSTATUS_AUTO);
-            break;
-         case 0x00000000:
-            // Red Earth need this. 8192 byte trans to 0x00003000 (from 0x007ec000???)
-            // seems some stars(6bit alpha) without compress
-            memcpy( (UINT8 *)RamCRam + real_destination, RomUser + real_source, real_length );
-            Sh2SetIRQLine(10, SH2_IRQSTATUS_AUTO);
-            break;
-         default:
-            break;
-      }
+			break; // our default fill
+
+		switch (dat1 & 0x00e00000)
+		{
+		case 0x00800000:
+			chardma_table_address = real_source;
+			Sh2SetIRQLine(10, SH2_IRQSTATUS_AUTO);
+			break;
+		case 0x00400000:
+			cps3_do_char_dma(real_source, real_destination, real_length);
+			Sh2SetIRQLine(10, SH2_IRQSTATUS_AUTO);
+			break;
+		case 0x00600000:
+			/* 8bpp DMA decompression
+			   - this is used on SFIII NG Sean's Stage ONLY */
+			cps3_do_alt_char_dma(real_source, real_destination, real_length);
+			Sh2SetIRQLine(10, SH2_IRQSTATUS_AUTO);
+			break;
+		case 0x00000000:
+			// Red Earth need this. 8192 byte trans to 0x00003000 (from 0x007ec000???)
+			// seems some stars(6bit alpha) without compress
+			memcpy((UINT8 *)RamCRam + real_destination, RomUser + real_source, real_length);
+			Sh2SetIRQLine(10, SH2_IRQSTATUS_AUTO);
+			break;
+		default:
+			break;
+		}
 	}
 }
 
 static INT32 MemIndex(void)
 {
 	UINT8 *Next = Mem;
-	RomBios 	   = Next;
-   Next       += 0x0080000;
+	RomBios = Next;
+	Next += 0x0080000;
 #ifndef WII_VM
-	RomUser		= Next;
-   Next       += cps3_data_rom_size;	// 0x5000000;
+	RomUser = Next;
+	Next += cps3_data_rom_size; // 0x5000000;
 #endif
-	RamStart	   = Next;
-	
-	RomGame 	   = Next;
-   Next       += 0x1000000;
-	RomGame_D 	= Next;
-   Next       += 0x1000000;
-	
-	RamC000		= Next;
-   Next       += 0x0000400;
-	RamC000_D	= Next;
-   Next       += 0x0000400;
+	RamStart = Next;
 
-	RamMain		= Next;
-   Next       += 0x0080000;
+	RomGame = Next;
+	Next += 0x1000000;
+	RomGame_D = Next;
+	Next += 0x1000000;
 
-	RamPal		= (UINT16 *) Next; Next += 0x0020000 * sizeof(UINT16);
-	RamSpr		= (UINT32 *) Next; Next += 0x0020000 * sizeof(UINT32);
+	RamC000 = Next;
+	Next += 0x0000400;
+	RamC000_D = Next;
+	Next += 0x0000400;
 
-	RamCRam		= (UINT32 *) Next; Next += 0x0200000 * sizeof(UINT32);
-	RamSS		   = (UINT32 *) Next; Next += 0x0004000 * sizeof(UINT32);
-	
-	RamVReg		= (UINT32 *) Next; Next += 0x0000040 * sizeof(UINT32);
-	
-	EEPROM		= (UINT16 *) Next; Next += 0x0000100 * sizeof(UINT16);
-	
-	RamEnd		= Next;
-	
-	Cps3CurPal	= (UINT16 *) Next; Next += 0x020001 * sizeof(UINT16); // iq_132 - layer disable
-	RamScreen	= (UINT32 *) Next; Next += (512 * 2) * (224 * 2 + 32) * sizeof(UINT32);
-	
-	MemEnd		= Next;
+	RamMain = Next;
+	Next += 0x0080000;
+
+	RamPal = (UINT16 *)Next;
+	Next += 0x0020000 * sizeof(UINT16);
+	RamSpr = (UINT32 *)Next;
+	Next += 0x0020000 * sizeof(UINT32);
+
+	RamCRam = (UINT32 *)Next;
+	Next += 0x0200000 * sizeof(UINT32);
+	RamSS = (UINT32 *)Next;
+	Next += 0x0004000 * sizeof(UINT32);
+
+	RamVReg = (UINT32 *)Next;
+	Next += 0x0000040 * sizeof(UINT32);
+
+	EEPROM = (UINT16 *)Next;
+	Next += 0x0000100 * sizeof(UINT16);
+
+	RamEnd = Next;
+
+	Cps3CurPal = (UINT16 *)Next;
+	Next += 0x020001 * sizeof(UINT16); // iq_132 - layer disable
+	RamScreen = (UINT32 *)Next;
+	Next += (512 * 2) * (224 * 2 + 32) * sizeof(UINT32);
+
+	MemEnd = Next;
 	return 0;
 }
 
@@ -561,49 +568,49 @@ UINT8 __fastcall cps3ReadByte(UINT32 addr)
 UINT16 __fastcall cps3ReadWord(UINT32 addr)
 {
 	addr &= 0xc7ffffff;
-	
-	switch (addr)
-   {
-      // redearth will read this !!!
-      case 0x040c0000:
-      case 0x040c0002:
-      case 0x040c0004:
-      case 0x040c0006:
-         // cps3_vbl_r
-      case 0x040c000c:
-      case 0x040c000e:
-      case 0x05140000: // cd-rom read
-      case 0x05140002: // cd-rom read
-         break;
 
-      case 0x05000000:
-         return ~Cps3Input[1];
-      case 0x05000002:
-         return ~Cps3Input[0];
-      case 0x05000004:
-         return ~Cps3Input[3];
-      case 0x05000006:
-         return ~Cps3Input[2];
-      default:
-         // cps3_unk_io_r
-         if ((addr >= 0x05000a00) && (addr < 0x05000a20))
-            return 0xffff;
-         if ((addr >= 0x05001000) && (addr < 0x05001204))
-         {
-            // EEPROM
-            addr -= 0x05001000;
-            if (addr >= 0x100 && addr < 0x180)
-            {
+	switch (addr)
+	{
+	// redearth will read this !!!
+	case 0x040c0000:
+	case 0x040c0002:
+	case 0x040c0004:
+	case 0x040c0006:
+		// cps3_vbl_r
+	case 0x040c000c:
+	case 0x040c000e:
+	case 0x05140000: // cd-rom read
+	case 0x05140002: // cd-rom read
+		break;
+
+	case 0x05000000:
+		return ~Cps3Input[1];
+	case 0x05000002:
+		return ~Cps3Input[0];
+	case 0x05000004:
+		return ~Cps3Input[3];
+	case 0x05000006:
+		return ~Cps3Input[2];
+	default:
+		// cps3_unk_io_r
+		if ((addr >= 0x05000a00) && (addr < 0x05000a20))
+			return 0xffff;
+		if ((addr >= 0x05001000) && (addr < 0x05001204))
+		{
+			// EEPROM
+			addr -= 0x05001000;
+			if (addr >= 0x100 && addr < 0x180)
+			{
 #ifdef MSB_FIRST
-               cps3_current_eeprom_read = EEPROM[((addr-0x100) >> 1)];
+				cps3_current_eeprom_read = EEPROM[((addr - 0x100) >> 1)];
 #else
-               cps3_current_eeprom_read = EEPROM[((addr-0x100) >> 1) ^ 1];
+				cps3_current_eeprom_read = EEPROM[((addr - 0x100) >> 1) ^ 1];
 #endif
-            }
-            else if (addr == 0x202)
-               return cps3_current_eeprom_read;
-         }
-   }
+			}
+			else if (addr == 0x202)
+				return cps3_current_eeprom_read;
+		}
+	}
 	return 0;
 }
 
@@ -618,202 +625,203 @@ UINT32 __fastcall cps3ReadLong(UINT32 addr)
 void __fastcall cps3WriteByte(UINT32 addr, UINT8 data)
 {
 	addr &= 0xc7ffffff;
-	
-   switch (addr)
-   {
-      // cps3_ss_bank_base_w
-      case 0x05050020:
-         ss_bank_base = ( ss_bank_base  & 0x00ffffff ) | (data << 24);
-         break;
-      case 0x05050021:
-         ss_bank_base = ( ss_bank_base  & 0xff00ffff ) | (data << 16);
-         break;
-      case 0x05050022:
-         ss_bank_base = ( ss_bank_base  & 0xffff00ff ) | (data <<  8);
-         break;
-      case 0x05050023:
-         ss_bank_base = ( ss_bank_base  & 0xffffff00 ) | (data <<  0);
-         break;
-         // cps3_ss_pal_base_w
-      case 0x05050024:
-         ss_pal_base = ( ss_pal_base & 0x00ff ) | (data << 8);
-         break;
-      case 0x05050025:
-         ss_pal_base = ( ss_pal_base & 0xff00 ) | (data << 0);
-         break;
-      case 0x05050026:
-      case 0x05050027:
-      default:
-         break;
-   }
+
+	switch (addr)
+	{
+	// cps3_ss_bank_base_w
+	case 0x05050020:
+		ss_bank_base = (ss_bank_base & 0x00ffffff) | (data << 24);
+		break;
+	case 0x05050021:
+		ss_bank_base = (ss_bank_base & 0xff00ffff) | (data << 16);
+		break;
+	case 0x05050022:
+		ss_bank_base = (ss_bank_base & 0xffff00ff) | (data << 8);
+		break;
+	case 0x05050023:
+		ss_bank_base = (ss_bank_base & 0xffffff00) | (data << 0);
+		break;
+		// cps3_ss_pal_base_w
+	case 0x05050024:
+		ss_pal_base = (ss_pal_base & 0x00ff) | (data << 8);
+		break;
+	case 0x05050025:
+		ss_pal_base = (ss_pal_base & 0xff00) | (data << 0);
+		break;
+	case 0x05050026:
+	case 0x05050027:
+	default:
+		break;
+	}
 }
 
 void __fastcall cps3WriteWord(UINT32 addr, UINT16 data)
 {
 	addr &= 0xc7ffffff;
-	
+
 	switch (addr)
-   {
-      case 0x040c0086:
-         if (cram_bank != data)
-         {
-            cram_bank = data & 7;
-            Sh2MapMemory(((UINT8 *)RamCRam) + (cram_bank << 20), 0x04100000, 0x041fffff, SH2_RAM);
-         }
-         break;
-      case 0x040c0088:
-         gfxflash_bank = data - 2;
-         break;
-         // cps3_characterdma_w
-      case 0x040c0096: 
-         chardma_source = data; 
-         break;
-      case 0x040c0098:
-         if (data & 0x0040)
-            cps3_process_character_dma( chardma_source | ((data & 0x003f) << 16) );
-         break;
-         // cps3_palettedma_w
-      case 0x040c00a0:
-         paldma_source = (paldma_source & 0x0000ffff) | (data << 16);
-         break;
-      case 0x040c00a2:
-         paldma_source = (paldma_source & 0xffff0000) | (data <<  0);
-         break;
-      case 0x040c00a4:
-         paldma_dest = (paldma_dest & 0x0000ffff) | (data << 16);
-         break;
-      case 0x040c00a6:
-         paldma_dest = (paldma_dest & 0xffff0000) | (data <<  0);
-         break;
-      case 0x040c00a8:
-         paldma_fade = (paldma_fade & 0x0000ffff) | (data << 16);
-         break;
-      case 0x040c00aa:
-         paldma_fade = (paldma_fade & 0xffff0000) | (data <<  0);
-         break;
-      case 0x040c00ac:
-         paldma_length = data;
-         break;
-      case 0x040c00ae:
-         if (data & 0x0002)
-         {
-            for (UINT32 i=0; i<paldma_length; i++)
-            {
-               UINT16 *src    = (UINT16 *)RomUser;
+	{
+	case 0x040c0086:
+		if (cram_bank != data)
+		{
+			cram_bank = data & 7;
+			Sh2MapMemory(((UINT8 *)RamCRam) + (cram_bank << 20), 0x04100000, 0x041fffff, SH2_RAM);
+		}
+		break;
+	case 0x040c0088:
+		gfxflash_bank = data - 2;
+		break;
+		// cps3_characterdma_w
+	case 0x040c0096:
+		chardma_source = data;
+		break;
+	case 0x040c0098:
+		if (data & 0x0040)
+			cps3_process_character_dma(chardma_source | ((data & 0x003f) << 16));
+		break;
+		// cps3_palettedma_w
+	case 0x040c00a0:
+		paldma_source = (paldma_source & 0x0000ffff) | (data << 16);
+		break;
+	case 0x040c00a2:
+		paldma_source = (paldma_source & 0xffff0000) | (data << 0);
+		break;
+	case 0x040c00a4:
+		paldma_dest = (paldma_dest & 0x0000ffff) | (data << 16);
+		break;
+	case 0x040c00a6:
+		paldma_dest = (paldma_dest & 0xffff0000) | (data << 0);
+		break;
+	case 0x040c00a8:
+		paldma_fade = (paldma_fade & 0x0000ffff) | (data << 16);
+		break;
+	case 0x040c00aa:
+		paldma_fade = (paldma_fade & 0xffff0000) | (data << 0);
+		break;
+	case 0x040c00ac:
+		paldma_length = data;
+		break;
+	case 0x040c00ae:
+		if (data & 0x0002)
+		{
+			for (UINT32 i = 0; i < paldma_length; i++)
+			{
+				UINT16 *src = (UINT16 *)RomUser;
 #ifdef MSB_FIRST
-               UINT16 coldata = src[(paldma_source - 0x200000 + i)];
+				UINT16 coldata = src[(paldma_source - 0x200000 + i)];
 #else
-               UINT16 coltmp  = src[(paldma_source - 0x200000 + i)];
-               UINT16 coldata = (coltmp << 8) | (coltmp >> 8);
+				UINT16 coltmp = src[(paldma_source - 0x200000 + i)];
+				UINT16 coldata = (coltmp << 8) | (coltmp >> 8);
 #endif
-               UINT32 r       = (coldata & 0x001F) >>  0;
-               UINT32 g       = (coldata & 0x03E0) >>  5;
-               UINT32 b       = (coldata & 0x7C00) >> 10;
-               if (paldma_fade != 0)
-               {
-                  INT32 fade = (paldma_fade & 0x3f000000)>>24;
-                  r          = (r * fade) >> 5;
-                  if (r > 0x1f)
-                     r       = 0x1f;
-                  fade       = (paldma_fade & 0x003f0000)>>16;
-                  g          = (g * fade) >> 5;
-                  if (g > 0x1f)
-                     g       = 0x1f;
-                  fade       = (paldma_fade & 0x0000003f)>> 0;
-                  b          = (b * fade) >> 5;
-                  if (b > 0x1f)
-                     b       = 0x1f;
-                  coldata    = (r << 0) | (g << 5) | (b << 10);
-               }
+				UINT32 r = (coldata & 0x001F) >> 0;
+				UINT32 g = (coldata & 0x03E0) >> 5;
+				UINT32 b = (coldata & 0x7C00) >> 10;
+				if (paldma_fade != 0)
+				{
+					INT32 fade = (paldma_fade & 0x3f000000) >> 24;
+					r = (r * fade) >> 5;
+					if (r > 0x1f)
+						r = 0x1f;
+					fade = (paldma_fade & 0x003f0000) >> 16;
+					g = (g * fade) >> 5;
+					if (g > 0x1f)
+						g = 0x1f;
+					fade = (paldma_fade & 0x0000003f) >> 0;
+					b = (b * fade) >> 5;
+					if (b > 0x1f)
+						b = 0x1f;
+					coldata = (r << 0) | (g << 5) | (b << 10);
+				}
 
-               r = r << 3;
-               g = g << 3;
-               b = b << 3;
+				r = r << 3;
+				g = g << 3;
+				b = b << 3;
 
 #ifdef MSB_FIRST
-               RamPal[(paldma_dest + i)]      = coldata;
+				RamPal[(paldma_dest + i)] = coldata;
 #else
-               RamPal[(paldma_dest + i) ^ 1]  = coldata;
+				RamPal[(paldma_dest + i) ^ 1] = coldata;
 #endif
-               Cps3CurPal[(paldma_dest + i) ] = BurnHighCol(r, g, b, 0);
-            }
-            Sh2SetIRQLine(10, SH2_IRQSTATUS_AUTO);
-         }
-         break;
-         // cps3_ss_bank_base_w
-      case 0x05050020:
-         ss_bank_base = ( ss_bank_base  & 0x0000ffff ) | (data << 16);
-         break;
-      case 0x05050022:
-         ss_bank_base = ( ss_bank_base  & 0xffff0000 ) | (data <<  0);
-         break;
-         // cps3_ss_pal_base_w
-      case 0x05050024:
-         ss_pal_base = data;
-         break;
-      case 0x05100000:
-         Sh2SetIRQLine(12, SH2_IRQSTATUS_NONE);
-         break;
-      case 0x05110000:
-         Sh2SetIRQLine(10, SH2_IRQSTATUS_NONE);
-         break;
-      case 0x040c0084:
-      case 0x05050026:
-      case 0x05140000: // cd-rom read
-      case 0x05140002: // cd-rom read
-      case 0x04200554:
-      case 0x04200aaa:
-         // gfx flash command 
-         // "0xaa 0x55 0x90" set flash to get id 
-         // "0xaa 0x55 0xf0" set flash to normal read
-         break;
-      default:
-         if ((addr >= 0x040c0000) && (addr < 0x040c0100))
-         {
-            // 0x040C0000 ~ 0x040C001f : cps3_unk_vidregs
-            // 0x040C0020 ~ 0x040C002b : tilemap20_regs_base
-            // 0x040C0030 ~ 0x040C003b : tilemap30_regs_base
-            // 0x040C0040 ~ 0x040C004b : tilemap40_regs_base
-            // 0x040C0050 ~ 0x040C005b : tilemap50_regs_base
-            // 0x040C0060 ~ 0x040C007f : cps3_fullscreenzoom
+				Cps3CurPal[(paldma_dest + i)] = BurnHighCol(r, g, b, 0);
+			}
+			Sh2SetIRQLine(10, SH2_IRQSTATUS_AUTO);
+		}
+		break;
+		// cps3_ss_bank_base_w
+	case 0x05050020:
+		ss_bank_base = (ss_bank_base & 0x0000ffff) | (data << 16);
+		break;
+	case 0x05050022:
+		ss_bank_base = (ss_bank_base & 0xffff0000) | (data << 0);
+		break;
+		// cps3_ss_pal_base_w
+	case 0x05050024:
+		ss_pal_base = data;
+		break;
+	case 0x05100000:
+		Sh2SetIRQLine(12, SH2_IRQSTATUS_NONE);
+		break;
+	case 0x05110000:
+		Sh2SetIRQLine(10, SH2_IRQSTATUS_NONE);
+		break;
+	case 0x040c0084:
+	case 0x05050026:
+	case 0x05140000: // cd-rom read
+	case 0x05140002: // cd-rom read
+	case 0x04200554:
+	case 0x04200aaa:
+		// gfx flash command
+		// "0xaa 0x55 0x90" set flash to get id
+		// "0xaa 0x55 0xf0" set flash to normal read
+		break;
+	default:
+		if ((addr >= 0x040c0000) && (addr < 0x040c0100))
+		{
+			// 0x040C0000 ~ 0x040C001f : cps3_unk_vidregs
+			// 0x040C0020 ~ 0x040C002b : tilemap20_regs_base
+			// 0x040C0030 ~ 0x040C003b : tilemap30_regs_base
+			// 0x040C0040 ~ 0x040C004b : tilemap40_regs_base
+			// 0x040C0050 ~ 0x040C005b : tilemap50_regs_base
+			// 0x040C0060 ~ 0x040C007f : cps3_fullscreenzoom
 
-            addr &= 0xff;
+			addr &= 0xff;
 #ifdef MSB_FIRST
-            ((UINT16 *)RamVReg)[ (addr >> 1) ] = data;
+			((UINT16 *)RamVReg)[(addr >> 1)] = data;
 #else
-            ((UINT16 *)RamVReg)[ (addr >> 1) ^ 1 ] = data;
+			((UINT16 *)RamVReg)[(addr >> 1) ^ 1] = data;
 #endif
-
-         }
-         else if ((addr >= 0x05000000) && (addr < 0x05001000)) { }
-         else if ((addr >= 0x05001000) && (addr < 0x05001204))
-         {
-            // EEPROM
-            addr -= 0x05001000;
-            if ((addr>=0x080) && (addr<0x100))
+		}
+		else if ((addr >= 0x05000000) && (addr < 0x05001000))
+		{
+		}
+		else if ((addr >= 0x05001000) && (addr < 0x05001204))
+		{
+			// EEPROM
+			addr -= 0x05001000;
+			if ((addr >= 0x080) && (addr < 0x100))
 #ifdef MSB_FIRST
-               EEPROM[((addr-0x080) >> 1)]  = data;
+				EEPROM[((addr - 0x080) >> 1)] = data;
 #else
-            EEPROM[((addr-0x080) >> 1) ^ 1] = data;
+				EEPROM[((addr - 0x080) >> 1) ^ 1] = data;
 #endif
-         }
-   }
+		}
+	}
 }
 
 static void __fastcall cps3WriteLong(UINT32 addr, UINT32 data) { addr &= 0xc7ffffff; }
-static void __fastcall cps3C0WriteByte(UINT32 addr, UINT8 data) { }
-static void __fastcall cps3C0WriteWord(UINT32 addr, UINT16 data) { }
+static void __fastcall cps3C0WriteByte(UINT32 addr, UINT8 data) {}
+static void __fastcall cps3C0WriteWord(UINT32 addr, UINT16 data) {}
 
 static void __fastcall cps3C0WriteLong(UINT32 addr, UINT32 data)
 {
 	if (addr < 0xc0000400)
 	{
-		*(UINT32 *)(RamC000 + (addr & 0x3ff))   = data;
+		*(UINT32 *)(RamC000 + (addr & 0x3ff)) = data;
 		*(UINT32 *)(RamC000_D + (addr & 0x3ff)) = data ^ cps3_mask(addr, cps3_key1, cps3_key2);
 	}
 }
 
-// If fastboot != 1 
+// If fastboot != 1
 
 static UINT8 __fastcall cps3RomReadByte(UINT32 addr)
 {
@@ -835,36 +843,44 @@ static UINT16 __fastcall cps3RomReadWord(UINT32 addr)
 
 static UINT32 __fastcall cps3RomReadLong(UINT32 addr)
 {
-   UINT32 retvalue, pc;
+	UINT32 retvalue, pc;
 	addr &= 0xc7ffffff;
-	
+
 	retvalue = cps3_flash_read(&main_flash, addr);
-	if ( main_flash.flash_mode == FM_NORMAL )
+	if (main_flash.flash_mode == FM_NORMAL)
 		retvalue = *(UINT32 *)(RomGame_D + (addr & 0x00ffffff));
-	
+
+#ifndef MSB_FIRST
+	retvalue = (retvalue << 16) | (retvalue >> 16);
+#endif
+
 	pc = Sh2GetPC(0);
 	if (pc == cps3_bios_test_hack || pc == cps3_game_test_hack)
-   {
-		if ( main_flash.flash_mode == FM_NORMAL )
+	{
+		if (main_flash.flash_mode == FM_NORMAL)
 			retvalue = *(UINT32 *)(RomGame + (addr & 0x00ffffff));
+
+#ifndef MSB_FIRST
+		retvalue = (retvalue << 16) | (retvalue >> 16);
+#endif
 	}
 	return retvalue;
 }
 
-static void __fastcall cps3RomWriteByte(UINT32 addr, UINT8 data) { }
-static void __fastcall cps3RomWriteWord(UINT32 addr, UINT16 data) { }
+static void __fastcall cps3RomWriteByte(UINT32 addr, UINT8 data) {}
+static void __fastcall cps3RomWriteWord(UINT32 addr, UINT16 data) {}
 
 static void __fastcall cps3RomWriteLong(UINT32 addr, UINT32 data)
 {
 #ifdef WII_VM
-	if(BurnCreateCache)
+	if (BurnCreateCache)
 #endif
 	{
 		addr &= 0x00ffffff;
 		cps3_flash_write(&main_flash, addr, data);
-		
-		if ( main_flash.flash_mode == FM_NORMAL )
-      {
+
+		if (main_flash.flash_mode == FM_NORMAL)
+		{
 			*(UINT32 *)(RomGame + addr) = data;
 			*(UINT32 *)(RomGame_D + addr) = data ^ cps3_mask(addr + 0x06000000, cps3_key1, cps3_key2);
 		}
@@ -892,45 +908,48 @@ static UINT16 __fastcall cps3RomReadWordSpe(UINT32 addr)
 static UINT32 __fastcall cps3RomReadLongSpe(UINT32 addr)
 {
 	addr &= 0xc7ffffff;
-	
+
 	UINT32 retvalue = cps3_flash_read(&main_flash, addr);
-	if ( main_flash.flash_mode == FM_NORMAL )
+	if (main_flash.flash_mode == FM_NORMAL)
 		retvalue = *(UINT32 *)(RomGame + (addr & 0x00ffffff));
+
+#ifndef MSB_FIRST
+	retvalue = (retvalue << 16) | (retvalue >> 16);
+#endif
 
 	return retvalue;
 }
 
 //------------------
 
-static UINT8 __fastcall cps3VidReadByte(UINT32 addr)  { return 0; }
+static UINT8 __fastcall cps3VidReadByte(UINT32 addr) { return 0; }
 static UINT16 __fastcall cps3VidReadWord(UINT32 addr) { return 0; }
 static UINT32 __fastcall cps3VidReadLong(UINT32 addr) { return 0; }
-static void __fastcall cps3VidWriteByte(UINT32 addr, UINT8 data) { }
+static void __fastcall cps3VidWriteByte(UINT32 addr, UINT8 data) {}
 
 static void __fastcall cps3VidWriteWord(UINT32 addr, UINT16 data)
 {
 	addr &= 0xc7ffffff;
 	if ((addr >= 0x04080000) && (addr < 0x040c0000))
-   {
-      // Palette
-      UINT32 palindex      = (addr - 0x04080000) >> 1;
+	{
+		// Palette
+		UINT32 palindex = (addr - 0x04080000) >> 1;
 #ifdef MSB_FIRST
-      RamPal[palindex]     = data;
+		RamPal[palindex] = data;
 #else
-      RamPal[palindex ^ 1] = data;
+		RamPal[palindex ^ 1] = data;
 #endif
 
-      INT32 r = (data & 0x001F) << 3;	// Red
-      INT32 g = (data & 0x03E0) >> 2;	// Green
-      INT32 b = (data & 0x7C00) >> 7;	// Blue
+		INT32 r = (data & 0x001F) << 3; // Red
+		INT32 g = (data & 0x03E0) >> 2; // Green
+		INT32 b = (data & 0x7C00) >> 7; // Blue
 
-      r |= r >> 5;
-      g |= g >> 5;
-      b |= b >> 5;
+		r |= r >> 5;
+		g |= g >> 5;
+		b |= b >> 5;
 
-      Cps3CurPal[palindex] = BurnHighCol(r, g, b, 0);
-
-   }
+		Cps3CurPal[palindex] = BurnHighCol(r, g, b, 0);
+	}
 }
 
 static void __fastcall cps3VidWriteLong(UINT32 addr, UINT32 data)
@@ -940,7 +959,7 @@ static void __fastcall cps3VidWriteLong(UINT32 addr, UINT32 data)
 
 static UINT8 __fastcall cps3RamReadByte(UINT32 addr)
 {
-	if (addr == cps3_speedup_ram_address )
+	if (addr == cps3_speedup_ram_address)
 		if (Sh2GetPC(0) == cps3_speedup_code_address)
 			Sh2BurnUntilInt(0);
 
@@ -956,10 +975,10 @@ static UINT16 __fastcall cps3RamReadWord(UINT32 addr)
 {
 	addr &= 0x7ffff;
 
-	if (addr == cps3_speedup_ram_address )
+	if (addr == cps3_speedup_ram_address)
 		if (Sh2GetPC(0) == cps3_speedup_code_address)
 			Sh2BurnUntilInt(0);
-	
+
 #ifdef MSB_FIRST
 	return *(UINT16 *)(RamMain + addr);
 #else
@@ -969,10 +988,10 @@ static UINT16 __fastcall cps3RamReadWord(UINT32 addr)
 
 static UINT32 __fastcall cps3RamReadLong(UINT32 addr)
 {
-	if (addr == cps3_speedup_ram_address )
+	if (addr == cps3_speedup_ram_address)
 		if (Sh2GetPC(0) == cps3_speedup_code_address)
 			Sh2BurnUntilInt(0);
-		
+
 	addr &= 0x7ffff;
 	return *(UINT32 *)(RamMain + addr);
 }
@@ -980,68 +999,72 @@ static UINT32 __fastcall cps3RamReadLong(UINT32 addr)
 // CPS3 Region Patch
 static void Cps3PatchRegion(void)
 {
-	if ( cps3_region_address )
-   {
+	if (cps3_region_address)
+	{
 #ifdef MSB_FIRST
-      RomBios[cps3_region_address ^ 0x03] = (RomBios[cps3_region_address ^ 0x03] & 0xf0) | (cps3_dip & 0x7f);
+		RomBios[cps3_region_address ^ 0x03] = (RomBios[cps3_region_address ^ 0x03] & 0xf0) | (cps3_dip & 0x7f);
 #else
-      RomBios[cps3_region_address] = (RomBios[cps3_region_address] & 0xf0) | (cps3_dip & 0x7f);
+		RomBios[cps3_region_address] = (RomBios[cps3_region_address] & 0xf0) | (cps3_dip & 0x7f);
 #endif
-      if ( cps3_ncd_address )
-      {
-         if (cps3_dip & 0x10)
-            RomBios[cps3_ncd_address] |= 0x01;
-         else
-            RomBios[cps3_ncd_address] &= 0xfe;
-      }
-   }
+		if (cps3_ncd_address)
+		{
+			if (cps3_dip & 0x10)
+				RomBios[cps3_ncd_address] |= 0x01;
+			else
+				RomBios[cps3_ncd_address] &= 0xfe;
+		}
+	}
 }
 
 static INT32 Cps3Reset(void)
 {
-   // re-map cram_bank
-   cram_bank = 0;
-   Sh2MapMemory((UINT8 *)RamCRam, 0x04100000, 0x041fffff, SH2_RAM);
+	// re-map cram_bank
+	cram_bank = 0;
+	Sh2MapMemory((UINT8 *)RamCRam, 0x04100000, 0x041fffff, SH2_RAM);
 
-   Cps3PatchRegion();
+	Cps3PatchRegion();
 
-   // [CD-ROM not emulated] All CHD drivers cause a Guru Meditation with the normal bios boot.
-   if(!BurnDrvGetHardwareCode() & HARDWARE_CAPCOM_CPS3_NO_CD) // normal boot
-      Sh2Reset();
-   else
-   {
-      // fast boot
-      if (cps3_isSpecial)
-         Sh2Reset( *(UINT32 *)(RomGame + 0), *(UINT32 *)(RomGame + 4) );
-      else
-         Sh2Reset( *(UINT32 *)(RomGame_D + 0), *(UINT32 *)(RomGame_D + 4) );
-      Sh2SetVBR(0x06000000);
-   }
+	// [CD-ROM not emulated] All CHD drivers cause a Guru Meditation with the normal bios boot.
+	if (!BurnDrvGetHardwareCode() & HARDWARE_CAPCOM_CPS3_NO_CD) // normal boot
+		Sh2Reset();
+	else
+	{
+		// fast boot
+		if (cps3_isSpecial)
+			Sh2Reset(*(UINT32 *)(RomGame + 0), *(UINT32 *)(RomGame + 4));
+		else
+			Sh2Reset(*(UINT32 *)(RomGame_D + 0), *(UINT32 *)(RomGame_D + 4));
+		Sh2SetVBR(0x06000000);
+	}
 
-   if (cps3_dip & 0x80)
-   {
-      EEPROM[0x11] = 0x100 + (EEPROM[0x11] & 0xff);
-      EEPROM[0x29] = 0x100 + (EEPROM[0x29] & 0xff);
-   }
-   else
-   {
-      EEPROM[0x11] = 0x000 + (EEPROM[0x11] & 0xff);
-      EEPROM[0x29] = 0x000 + (EEPROM[0x29] & 0xff);
-   }
+	if (cps3_dip & 0x80)
+	{
+		EEPROM[0x11] = 0x100 + (EEPROM[0x11] & 0xff);
+		EEPROM[0x29] = 0x100 + (EEPROM[0x29] & 0xff);
+	}
+	else
+	{
+		EEPROM[0x11] = 0x000 + (EEPROM[0x11] & 0xff);
+		EEPROM[0x29] = 0x000 + (EEPROM[0x29] & 0xff);
+	}
 
-   cps3_current_eeprom_read = 0;	
-   cps3_reset = 0;	
-   return 0;
+	cps3_current_eeprom_read = 0;
+	cps3_reset = 0;
+	return 0;
 }
 
 #ifndef MSB_FIRST
-static void be_to_le(UINT8 * p, INT32 size)
+static void be_to_le(UINT8 *p, INT32 size)
 {
 	UINT8 c;
-	for(INT32 i=0; i<size; i+=4, p+=4)
-   {
-		c = *(p+0);	*(p+0) = *(p+3);	*(p+3) = c;
-		c = *(p+1);	*(p+1) = *(p+2);	*(p+2) = c;
+	for (INT32 i = 0; i < size; i += 4, p += 4)
+	{
+		c = *(p + 0);
+		*(p + 0) = *(p + 3);
+		*(p + 3) = c;
+		c = *(p + 1);
+		*(p + 1) = *(p + 2);
+		*(p + 2) = c;
 	}
 }
 #endif
@@ -1054,42 +1077,44 @@ INT32 cps3Init(void)
 	BurnSetRefreshRate(59.59949);
 
 	// calc graphic and sound roms size
-	ii = 0; cps3_data_rom_size = 0;
+	ii = 0;
+	cps3_data_rom_size = 0;
 	while (BurnDrvGetRomInfo(&pri, ii) == 0)
-   {
+	{
 		if (pri.nType & (BRF_GRA | BRF_SND))
 			cps3_data_rom_size += pri.nLen;
 		ii++;
 	}
 
-	// CHD games 
+	// CHD games
 	if (cps3_data_rom_size == 0)
-      cps3_data_rom_size = 0x5000000;	
+		cps3_data_rom_size = 0x5000000;
 
 	Mem = NULL;
 	MemIndex();
 	INT32 nLen = MemEnd - (UINT8 *)0;
 	if ((Mem = (UINT8 *)BurnMalloc(nLen)) == NULL)
-      return 1;
+		return 1;
 	memset(Mem, 0, nLen); // blank all memory
-	MemIndex();	
+	MemIndex();
 
 	// load and decode bios roms
-	ii = 0; offset = 0;
+	ii = 0;
+	offset = 0;
 	while (BurnDrvGetRomInfo(&pri, ii) == 0)
-   {
+	{
 		if (pri.nType & BRF_BIOS)
-      {
-			nRet = BurnLoadRom(RomBios + offset, ii, 1); 
+		{
+			nRet = BurnLoadRom(RomBios + offset, ii, 1);
 			if (nRet != 0)
-            return 1;
+				return 1;
 			offset += pri.nLen;
 		}
 		ii++;
 	}
 
 #ifndef MSB_FIRST
-	be_to_le( RomBios, 0x080000 );
+	be_to_le(RomBios, 0x080000);
 #endif
 	cps3_decrypt_bios();
 
@@ -1098,37 +1123,37 @@ INT32 cps3Init(void)
 	BurnCreateCache = CacheInit(RomUser, cps3_data_rom_size);
 
 	struct CacheInfo Cache[] = {
-		{"RomUser", RomUser, (cps3_data_rom_size) / (1*MB) },
-		{"RomGame", RomGame, (16*MB) / (1*MB) },
-		{"RomGame_D", RomGame_D, (16*MB) / (1*MB) }
-	};
+		{"RomUser", RomUser, (cps3_data_rom_size) / (1 * MB)},
+		{"RomGame", RomGame, (16 * MB) / (1 * MB)},
+		{"RomGame_D", RomGame_D, (16 * MB) / (1 * MB)}};
 
-	if(BurnCreateCache)
+	if (BurnCreateCache)
 #endif
 	{
 		// load and decode sh-2 program roms
-		ii = 0;	offset = 0;
+		ii = 0;
+		offset = 0;
 		while (BurnDrvGetRomInfo(&pri, ii) == 0)
-      {
+		{
 			if (pri.nType & BRF_PRG)
-         {
-            nRet = BurnLoadRom(RomGame + offset + 0, ii + 0, 4);
-            if (nRet != 0)
-               return 1;
-            nRet = BurnLoadRom(RomGame + offset + 1, ii + 1, 4);
-            if (nRet != 0)
-               return 1;
-            nRet = BurnLoadRom(RomGame + offset + 2, ii + 2, 4);
-            if (nRet != 0)
-               return 1;
-            nRet = BurnLoadRom(RomGame + offset + 3, ii + 3, 4);
-            if (nRet != 0)
-               return 1;
-            offset += pri.nLen * 4;
-            ii     += 4;
-         }
-         else
-            ii++;
+			{
+				nRet = BurnLoadRom(RomGame + offset + 0, ii + 0, 4);
+				if (nRet != 0)
+					return 1;
+				nRet = BurnLoadRom(RomGame + offset + 1, ii + 1, 4);
+				if (nRet != 0)
+					return 1;
+				nRet = BurnLoadRom(RomGame + offset + 2, ii + 2, 4);
+				if (nRet != 0)
+					return 1;
+				nRet = BurnLoadRom(RomGame + offset + 3, ii + 3, 4);
+				if (nRet != 0)
+					return 1;
+				offset += pri.nLen * 4;
+				ii += 4;
+			}
+			else
+				ii++;
 		}
 
 #ifndef MSB_FIRST
@@ -1137,27 +1162,28 @@ INT32 cps3Init(void)
 		cps3_decrypt_game();
 #ifdef WII_VM
 		INT32 PRG_size = offset;
-		UINT8 step     = (cps3_data_rom_size)/(1*MB);
-		CacheRead     += (offset)/(1*MB);
+		UINT8 step = (cps3_data_rom_size) / (1 * MB);
+		CacheRead += (offset) / (1 * MB);
 		CacheHandle(Cache, CacheRead, "Loading sh-2 roms done.", SHOW);
 #endif
 		// load graphic and sound roms
-		ii = 0;	offset = 0;
+		ii = 0;
+		offset = 0;
 		while (BurnDrvGetRomInfo(&pri, ii) == 0)
-      {
+		{
 			if (pri.nType & (BRF_GRA | BRF_SND))
-         {
-            BurnLoadRom(RomUser + offset + 0, ii + 0, 2);
-            BurnLoadRom(RomUser + offset + 1, ii + 1, 2);
-            offset += pri.nLen * 2;
-            ii += 2;
+			{
+				BurnLoadRom(RomUser + offset + 0, ii + 0, 2);
+				BurnLoadRom(RomUser + offset + 1, ii + 1, 2);
+				offset += pri.nLen * 2;
+				ii += 2;
 #ifdef WII_VM
-            CacheRead = (offset + PRG_size)/(1*MB);
-            char txt[128];
-            snprintf(txt, sizeof(txt), "Loading Graphic and Sound in VM: %d/%d MB", CacheRead - (PRG_size/(1*MB)), step);
-            CacheHandle(Cache, CacheRead, txt, SHOW);
+				CacheRead = (offset + PRG_size) / (1 * MB);
+				char txt[128];
+				snprintf(txt, sizeof(txt), "Loading Graphic and Sound in VM: %d/%d MB", CacheRead - (PRG_size / (1 * MB)), step);
+				CacheHandle(Cache, CacheRead, txt, SHOW);
 #endif
-         }
+			}
 			else
 				ii++;
 		}
@@ -1174,72 +1200,72 @@ INT32 cps3Init(void)
 		Sh2Open(0);
 
 		// Map 68000 memory:
-		Sh2MapMemory(RomBios,		0x00000000, 0x0007ffff, SH2_ROM);	// BIOS
-		Sh2MapMemory(RamMain,		0x02000000, 0x0207ffff, SH2_RAM);	// Main RAM
-		Sh2MapMemory((UINT8 *) RamSpr,	0x04000000, 0x0407ffff, SH2_RAM);
-		Sh2MapMemory((UINT8 *) RamSS,	0x05040000, 0x0504ffff, SH2_RAM);	// 'SS' RAM (Score Screen) (text tilemap + toles)
+		Sh2MapMemory(RomBios, 0x00000000, 0x0007ffff, SH2_ROM); // BIOS
+		Sh2MapMemory(RamMain, 0x02000000, 0x0207ffff, SH2_RAM); // Main RAM
+		Sh2MapMemory((UINT8 *)RamSpr, 0x04000000, 0x0407ffff, SH2_RAM);
+		Sh2MapMemory((UINT8 *)RamSS, 0x05040000, 0x0504ffff, SH2_RAM); // 'SS' RAM (Score Screen) (text tilemap + toles)
 
-		Sh2SetReadByteHandler (0, cps3ReadByte);
-		Sh2SetReadWordHandler (0, cps3ReadWord);
-		Sh2SetReadLongHandler (0, cps3ReadLong);
+		Sh2SetReadByteHandler(0, cps3ReadByte);
+		Sh2SetReadWordHandler(0, cps3ReadWord);
+		Sh2SetReadLongHandler(0, cps3ReadLong);
 		Sh2SetWriteByteHandler(0, cps3WriteByte);
 		Sh2SetWriteWordHandler(0, cps3WriteWord);
 		Sh2SetWriteLongHandler(0, cps3WriteLong);
 
-		Sh2MapMemory(RamC000_D,		0xc0000000, 0xc00003ff, SH2_FETCH);	// Executes code from here
-		Sh2MapMemory(RamC000,		0xc0000000, 0xc00003ff, SH2_READ);
-		Sh2MapHandler(1,		0xc0000000, 0xc00003ff, SH2_WRITE);
+		Sh2MapMemory(RamC000_D, 0xc0000000, 0xc00003ff, SH2_FETCH); // Executes code from here
+		Sh2MapMemory(RamC000, 0xc0000000, 0xc00003ff, SH2_READ);
+		Sh2MapHandler(1, 0xc0000000, 0xc00003ff, SH2_WRITE);
 
 		Sh2SetWriteByteHandler(1, cps3C0WriteByte);
 		Sh2SetWriteWordHandler(1, cps3C0WriteWord);
 		Sh2SetWriteLongHandler(1, cps3C0WriteLong);
 
-		if( !BurnDrvGetHardwareCode() & HARDWARE_CAPCOM_CPS3_NO_CD ) 
-		{		
+		if (!BurnDrvGetHardwareCode() & HARDWARE_CAPCOM_CPS3_NO_CD)
+		{
 			if (cps3_isSpecial)
-         {
-				Sh2MapMemory(RomGame,	0x06000000, 0x06ffffff, SH2_READ);	// Decrypted SH2 Code
-				Sh2MapMemory(RomGame_D,	0x06000000, 0x06ffffff, SH2_FETCH);	// Decrypted SH2 Code
+			{
+				Sh2MapMemory(RomGame, 0x06000000, 0x06ffffff, SH2_READ);	// Decrypted SH2 Code
+				Sh2MapMemory(RomGame_D, 0x06000000, 0x06ffffff, SH2_FETCH); // Decrypted SH2 Code
 			}
-         else
-				Sh2MapMemory(RomGame_D,	0x06000000, 0x06ffffff, SH2_READ | SH2_FETCH);	// Decrypted SH2 Code
+			else
+				Sh2MapMemory(RomGame_D, 0x06000000, 0x06ffffff, SH2_READ | SH2_FETCH); // Decrypted SH2 Code
 		}
-      else
-      {
-			Sh2MapMemory(RomGame_D,		0x06000000, 0x06ffffff, SH2_FETCH);	// Decrypted SH2 Code
-			Sh2MapHandler(2,		      0x06000000, 0x06ffffff, SH2_READ | SH2_WRITE);
+		else
+		{
+			Sh2MapMemory(RomGame_D, 0x06000000, 0x06ffffff, SH2_FETCH); // Decrypted SH2 Code
+			Sh2MapHandler(2, 0x06000000, 0x06ffffff, SH2_READ | SH2_WRITE);
 
 			if (cps3_isSpecial)
-         {
-				Sh2SetReadByteHandler (2, cps3RomReadByteSpe);
-				Sh2SetReadWordHandler (2, cps3RomReadWordSpe);
-				Sh2SetReadLongHandler (2, cps3RomReadLongSpe);
+			{
+				Sh2SetReadByteHandler(2, cps3RomReadByteSpe);
+				Sh2SetReadWordHandler(2, cps3RomReadWordSpe);
+				Sh2SetReadLongHandler(2, cps3RomReadLongSpe);
 			}
-         else
-         {
-				Sh2SetReadByteHandler (2, cps3RomReadByte);
-				Sh2SetReadWordHandler (2, cps3RomReadWord);
-				Sh2SetReadLongHandler (2, cps3RomReadLong);
+			else
+			{
+				Sh2SetReadByteHandler(2, cps3RomReadByte);
+				Sh2SetReadWordHandler(2, cps3RomReadWord);
+				Sh2SetReadLongHandler(2, cps3RomReadLong);
 			}
-         Sh2SetWriteByteHandler(2, cps3RomWriteByte);
-         Sh2SetWriteWordHandler(2, cps3RomWriteWord);
-         Sh2SetWriteLongHandler(2, cps3RomWriteLong);
+			Sh2SetWriteByteHandler(2, cps3RomWriteByte);
+			Sh2SetWriteWordHandler(2, cps3RomWriteWord);
+			Sh2SetWriteLongHandler(2, cps3RomWriteLong);
 		}
 
 		Sh2MapHandler(3, 0x040e0000, 0x040e02ff, SH2_RAM);
-		Sh2SetReadByteHandler (3, cps3SndReadByte);
-		Sh2SetReadWordHandler (3, cps3SndReadWord);
-		Sh2SetReadLongHandler (3, cps3SndReadLong);
+		Sh2SetReadByteHandler(3, cps3SndReadByte);
+		Sh2SetReadWordHandler(3, cps3SndReadWord);
+		Sh2SetReadLongHandler(3, cps3SndReadLong);
 		Sh2SetWriteByteHandler(3, cps3SndWriteByte);
 		Sh2SetWriteWordHandler(3, cps3SndWriteWord);
 		Sh2SetWriteLongHandler(3, cps3SndWriteLong);
 
-		Sh2MapMemory((UINT8 *)RamPal,		0x04080000, 0x040bffff, SH2_READ);	// 16bit BE Colors
-		Sh2MapHandler(4,			0x04080000, 0x040bffff, SH2_WRITE);
+		Sh2MapMemory((UINT8 *)RamPal, 0x04080000, 0x040bffff, SH2_READ); // 16bit BE Colors
+		Sh2MapHandler(4, 0x04080000, 0x040bffff, SH2_WRITE);
 
-		Sh2SetReadByteHandler (4, cps3VidReadByte);
-		Sh2SetReadWordHandler (4, cps3VidReadWord);
-		Sh2SetReadLongHandler (4, cps3VidReadLong);
+		Sh2SetReadByteHandler(4, cps3VidReadByte);
+		Sh2SetReadWordHandler(4, cps3VidReadWord);
+		Sh2SetReadLongHandler(4, cps3VidReadLong);
 		Sh2SetWriteByteHandler(4, cps3VidWriteByte);
 		Sh2SetWriteWordHandler(4, cps3VidWriteWord);
 		Sh2SetWriteLongHandler(4, cps3VidWriteLong);
@@ -1247,23 +1273,23 @@ INT32 cps3Init(void)
 #ifdef SPEED_HACK
 		// install speedup read handler
 		Sh2MapHandler(5, 0x02000000 | (cps3_speedup_ram_address & 0x030000),
-				0x0200ffff | (cps3_speedup_ram_address & 0x030000), SH2_READ);
-		Sh2SetReadByteHandler (5, cps3RamReadByte);
-		Sh2SetReadWordHandler (5, cps3RamReadWord);
-		Sh2SetReadLongHandler (5, cps3RamReadLong);
+					  0x0200ffff | (cps3_speedup_ram_address & 0x030000), SH2_READ);
+		Sh2SetReadByteHandler(5, cps3RamReadByte);
+		Sh2SetReadWordHandler(5, cps3RamReadWord);
+		Sh2SetReadLongHandler(5, cps3RamReadLong);
 #endif
 	}
 
-	BurnDrvGetVisibleSize(&cps3_gfx_width, &cps3_gfx_height);	
-	RamScreen	+= (512 * 2) * 16 + 16; // safe draw	
+	BurnDrvGetVisibleSize(&cps3_gfx_width, &cps3_gfx_height);
+	RamScreen += (512 * 2) * 16 + 16; // safe draw
 	cps3SndInit(RomUser);
 	cps3SndSetRoute(BURN_SND_CPS3SND_ROUTE_1, 1.00, BURN_SND_ROUTE_LEFT);
 	cps3SndSetRoute(BURN_SND_CPS3SND_ROUTE_2, 1.00, BURN_SND_ROUTE_RIGHT);
 
-	pBurnDrvPalette = (UINT32*)Cps3CurPal;
+	pBurnDrvPalette = (UINT32 *)Cps3CurPal;
 
 #ifdef WII_VM
-	if(BurnCreateCache)
+	if (BurnCreateCache)
 		CacheHandle(Cache, CacheRead, "", WRITE);
 #endif
 	Cps3Reset();
@@ -1292,420 +1318,650 @@ INT32 cps3Exit(void)
 
 // Simple 5x7 bitmap font for digits and labels
 static const UINT8 perf_font_5x7[24][7] = {
-    {0x0E,0x11,0x13,0x15,0x19,0x11,0x0E}, // 0 (0)
-    {0x04,0x0C,0x04,0x04,0x04,0x04,0x0E}, // 1 (1)
-    {0x0E,0x11,0x01,0x06,0x08,0x10,0x1F}, // 2 (2)
-    {0x0E,0x11,0x01,0x06,0x01,0x11,0x0E}, // 3 (3)
-    {0x02,0x06,0x0A,0x12,0x1F,0x02,0x02}, // 4 (4)
-    {0x1F,0x10,0x1E,0x01,0x01,0x11,0x0E}, // 5 (5)
-    {0x06,0x08,0x10,0x1E,0x11,0x11,0x0E}, // 6 (6)
-    {0x1F,0x01,0x02,0x04,0x08,0x08,0x08}, // 7 (7)
-    {0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E}, // 8 (8)
-    {0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C}, // 9 (9)
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00}, // space (10)
-    {0x00,0x00,0x00,0x00,0x00,0x0C,0x0C}, // . (11)
-    {0x0E,0x11,0x10,0x10,0x10,0x11,0x0E}, // C (12)
-    {0x1E,0x11,0x11,0x1E,0x10,0x10,0x10}, // P (13)
-    {0x11,0x11,0x11,0x11,0x11,0x11,0x0E}, // U (14)
-    {0x1E,0x11,0x11,0x11,0x11,0x11,0x1E}, // D (15)
-    {0x1E,0x11,0x11,0x1E,0x14,0x12,0x11}, // R (16)
-    {0x11,0x11,0x11,0x15,0x15,0x1B,0x11}, // W (17)
-    {0x1F,0x10,0x10,0x1E,0x10,0x10,0x10}, // F (18)
-    {0x11,0x1B,0x15,0x15,0x11,0x11,0x11}, // M (19)
-    {0x00,0x00,0x04,0x04,0x1F,0x04,0x04}, // + (20)
-    {0x00,0x04,0x04,0x00,0x04,0x04,0x00}, // : (21)
+	{0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E}, // 0 (0)
+	{0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E}, // 1 (1)
+	{0x0E, 0x11, 0x01, 0x06, 0x08, 0x10, 0x1F}, // 2 (2)
+	{0x0E, 0x11, 0x01, 0x06, 0x01, 0x11, 0x0E}, // 3 (3)
+	{0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02}, // 4 (4)
+	{0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E}, // 5 (5)
+	{0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E}, // 6 (6)
+	{0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08}, // 7 (7)
+	{0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E}, // 8 (8)
+	{0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C}, // 9 (9)
+	{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, // space (10)
+	{0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C}, // . (11)
+	{0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E}, // C (12)
+	{0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10}, // P (13)
+	{0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E}, // U (14)
+	{0x1E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1E}, // D (15)
+	{0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11}, // R (16)
+	{0x11, 0x11, 0x11, 0x15, 0x15, 0x1B, 0x11}, // W (17)
+	{0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10}, // F (18)
+	{0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11}, // M (19)
+	{0x00, 0x00, 0x04, 0x04, 0x1F, 0x04, 0x04}, // + (20)
+	{0x00, 0x04, 0x04, 0x00, 0x04, 0x04, 0x00}, // : (21)
 };
 
 static void perf_draw_char(UINT16 *fb, INT32 x, INT32 y, INT32 ch, UINT16 color, INT32 pitch)
 {
-    INT32 idx = 10; // default space
-    if (ch >= '0' && ch <= '9') idx = ch - '0';
-    else if (ch == ' ') idx = 10;
-    else if (ch == '.') idx = 11;
-    else if (ch == ':') idx = 21;
-    else if (ch == 'C') idx = 12;
-    else if (ch == 'P') idx = 13;
-    else if (ch == 'U') idx = 14;
-    else if (ch == 'D') idx = 15;
-    else if (ch == 'R') idx = 16;
-    else if (ch == 'W') idx = 17;
-    else if (ch == 'F') idx = 18;
-    else if (ch == 'M') idx = 19;
-    
-    const UINT8 *glyph = perf_font_5x7[idx];
-    for (INT32 row = 0; row < 7; row++) {
-        UINT8 bits = glyph[row];
-        for (INT32 col = 0; col < 5; col++) {
-            if (bits & (0x10 >> col)) {
-                INT32 px = x + col;
-                INT32 py = y + row;
-                if (px >= 0 && px < pitch && py >= 0 && py < 224) {
-                    fb[py * pitch + px] = color;
-                }
-            }
-        }
-    }
-}
+	INT32 idx = 10; // default space
+	if (ch >= '0' && ch <= '9')
+		idx = ch - '0';
+	else if (ch == ' ')
+		idx = 10;
+	else if (ch == '.')
+		idx = 11;
+	else if (ch == ':')
+		idx = 21;
+	else if (ch == 'C')
+		idx = 12;
+	else if (ch == 'P')
+		idx = 13;
+	else if (ch == 'U')
+		idx = 14;
+	else if (ch == 'D')
+		idx = 15;
+	else if (ch == 'R')
+		idx = 16;
+	else if (ch == 'W')
+		idx = 17;
+	else if (ch == 'F')
+		idx = 18;
+	else if (ch == 'M')
+		idx = 19;
 
+	const UINT8 *glyph = perf_font_5x7[idx];
+	for (INT32 row = 0; row < 7; row++)
+	{
+		UINT8 bits = glyph[row];
+		for (INT32 col = 0; col < 5; col++)
+		{
+			if (bits & (0x10 >> col))
+			{
+				INT32 px = x + col;
+				INT32 py = y + row;
+				if (px >= 0 && px < pitch && py >= 0 && py < 224)
+				{
+					fb[py * pitch + px] = color;
+				}
+			}
+		}
+	}
+}
 
 static void perf_draw_string(UINT16 *fb, INT32 x, INT32 y, const char *str, UINT16 color, INT32 pitch)
 {
-    while (*str) {
-        perf_draw_char(fb, x, y, *str, color, pitch);
-        x += 6; // 5 pixels + 1 spacing
-        str++;
-    }
+	while (*str)
+	{
+		perf_draw_char(fb, x, y, *str, color, pitch);
+		x += 6; // 5 pixels + 1 spacing
+		str++;
+	}
 }
 
 static void perf_draw_number(UINT16 *fb, INT32 x, INT32 y, UINT32 num, UINT16 color, INT32 pitch)
 {
-    char buf[16];
-    INT32 i = 0;
-    if (num == 0) {
-        buf[i++] = '0';
-    } else {
-        while (num > 0 && i < 15) {
-            buf[i++] = '0' + (num % 10);
-            num /= 10;
-        }
-    }
-    // Reverse
-    for (INT32 j = i - 1; j >= 0; j--) {
-        perf_draw_char(fb, x, y, buf[j], color, pitch);
-        x += 6;
-    }
+	char buf[16];
+	INT32 i = 0;
+	if (num == 0)
+	{
+		buf[i++] = '0';
+	}
+	else
+	{
+		while (num > 0 && i < 15)
+		{
+			buf[i++] = '0' + (num % 10);
+			num /= 10;
+		}
+	}
+	// Reverse
+	for (INT32 j = i - 1; j >= 0; j--)
+	{
+		perf_draw_char(fb, x, y, buf[j], color, pitch);
+		x += 6;
+	}
 }
 
 static void draw_perf_overlay(void)
 {
-    if (!pBurnDraw) return;
-    
-    UINT16 *fb = (UINT16 *)pBurnDraw;
-    INT32 pitch = cps3_gfx_width;
-    
-    // Colors in RGB565
-    UINT16 bg_color = 0x0000;    // Black
-    UINT16 text_color = 0x07E0;  // Green
-    UINT16 warn_color = 0xFFE0;  // Yellow
-    UINT16 bad_color = 0xF800;   // Red
-    
-    // Draw background bar (semi-transparent effect via dithering)
-    for (INT32 y = 0; y < 32; y++) {
-        for (INT32 x = 0; x < 160; x++) {
-            if ((x + y) & 1) {
-                fb[y * pitch + x] = bg_color;
-            }
-        }
-    }
-    
-    // Choose color based on performance
-    UINT16 frame_color = text_color;
-    if (perf_avg_frame_us > 16667) frame_color = warn_color;  // Below 60fps
-    if (perf_avg_frame_us > 20000) frame_color = bad_color;   // Below 50fps
-    
-    // Line 1: "CPU: XXXX us"
-    perf_draw_string(fb, 2, 2, "CPU:", text_color, pitch);
-    perf_draw_number(fb, 28, 2, (UINT32)perf_avg_cpu_us, text_color, pitch);
-    
-    // Line 2: "DRW: XXXX us"  
-    perf_draw_string(fb, 2, 11, "DRW:", text_color, pitch);
-    perf_draw_number(fb, 28, 11, (UINT32)perf_avg_draw_us, text_color, pitch);
-    
-    // Line 3: "FRM: XXXX us" (total frame time with color coding)
-    perf_draw_string(fb, 2, 20, "FRM:", text_color, pitch);
-    perf_draw_number(fb, 28, 20, (UINT32)perf_avg_frame_us, frame_color, pitch);
-    
-    // Also show target: 16667us = 60fps
-    perf_draw_string(fb, 90, 20, ":16667", text_color, pitch);
+	if (!pBurnDraw)
+		return;
+
+	UINT16 *fb = (UINT16 *)pBurnDraw;
+	INT32 pitch = cps3_gfx_width;
+
+	// Colors in RGB565
+	UINT16 bg_color = 0x0000;	// Black
+	UINT16 text_color = 0x07E0; // Green
+	UINT16 warn_color = 0xFFE0; // Yellow
+	UINT16 bad_color = 0xF800;	// Red
+
+	// Draw background bar (semi-transparent effect via dithering)
+	for (INT32 y = 0; y < 32; y++)
+	{
+		for (INT32 x = 0; x < 160; x++)
+		{
+			if ((x + y) & 1)
+			{
+				fb[y * pitch + x] = bg_color;
+			}
+		}
+	}
+
+	// Choose color based on performance
+	UINT16 frame_color = text_color;
+	if (perf_avg_frame_us > 16667)
+		frame_color = warn_color; // Below 60fps
+	if (perf_avg_frame_us > 20000)
+		frame_color = bad_color; // Below 50fps
+
+	// Line 1: "CPU: XXXX us"
+	perf_draw_string(fb, 2, 2, "CPU:", text_color, pitch);
+	perf_draw_number(fb, 28, 2, (UINT32)perf_avg_cpu_us, text_color, pitch);
+
+	// Line 2: "DRW: XXXX us"
+	perf_draw_string(fb, 2, 11, "DRW:", text_color, pitch);
+	perf_draw_number(fb, 28, 11, (UINT32)perf_avg_draw_us, text_color, pitch);
+
+	// Line 3: "FRM: XXXX us" (total frame time with color coding)
+	perf_draw_string(fb, 2, 20, "FRM:", text_color, pitch);
+	perf_draw_number(fb, 28, 20, (UINT32)perf_avg_frame_us, frame_color, pitch);
+
+	// Also show target: 16667us = 60fps
+	perf_draw_string(fb, 90, 20, ":16667", text_color, pitch);
 }
 
 #endif // CPS3_PERF_OVERLAY
 
-
 static void cps3_drawgfxzoom_0(UINT32 code, UINT32 pal, INT32 flipx, INT32 flipy, INT32 x, INT32 y)
 {
-	if ((x > (cps3_gfx_width - 8)) || (y > (cps3_gfx_height - 8))) return;
-	UINT16 * dst   = (UINT16 *) pBurnDraw;
-	UINT8 * src    = (UINT8 *)RamSS;
-	UINT16 * color = Cps3CurPal + (pal << 4);
-	dst           += (y * cps3_gfx_width + x);
-	src           += code * 64;
-	
-	if ( flipy )
+	if ((x > (cps3_gfx_width - 8)) || (y > (cps3_gfx_height - 8)))
+		return;
+	UINT16 *dst = (UINT16 *)pBurnDraw;
+	UINT8 *src = (UINT8 *)RamSS;
+	UINT16 *color = Cps3CurPal + (pal << 4);
+	dst += (y * cps3_gfx_width + x);
+	src += code * 64;
+
+	if (flipy)
 	{
 		dst += cps3_gfx_width * 7;
 #ifdef MSB_FIRST
-		if ( flipx )
-			for(int i=0; i<8; i++, dst-= cps3_gfx_width, src += 8)
-         {
-				if ( src[ 1] & 0xf ) dst[7] = color [ src[ 1] & 0xf ];
-				if ( src[ 1] >>  4 ) dst[6] = color [ src[ 1] >>  4 ];
-				if ( src[ 3] & 0xf ) dst[5] = color [ src[ 3] & 0xf ];
-				if ( src[ 3] >>  4 ) dst[4] = color [ src[ 3] >>  4 ];
-				if ( src[ 5] & 0xf ) dst[3] = color [ src[ 5] & 0xf ];
-				if ( src[ 5] >>  4 ) dst[2] = color [ src[ 5] >>  4 ];
-				if ( src[ 7] & 0xf ) dst[1] = color [ src[ 7] & 0xf ];
-				if ( src[ 7] >>  4 ) dst[0] = color [ src[ 7] >>  4 ];
+		if (flipx)
+			for (int i = 0; i < 8; i++, dst -= cps3_gfx_width, src += 8)
+			{
+				if (src[1] & 0xf)
+					dst[7] = color[src[1] & 0xf];
+				if (src[1] >> 4)
+					dst[6] = color[src[1] >> 4];
+				if (src[3] & 0xf)
+					dst[5] = color[src[3] & 0xf];
+				if (src[3] >> 4)
+					dst[4] = color[src[3] >> 4];
+				if (src[5] & 0xf)
+					dst[3] = color[src[5] & 0xf];
+				if (src[5] >> 4)
+					dst[2] = color[src[5] >> 4];
+				if (src[7] & 0xf)
+					dst[1] = color[src[7] & 0xf];
+				if (src[7] >> 4)
+					dst[0] = color[src[7] >> 4];
 			}
 		else
-			for(int i=0; i<8; i++, dst-= cps3_gfx_width, src += 8)
-         {
-				if ( src[ 1] & 0xf ) dst[0] = color [ src[ 1] & 0xf ];
-				if ( src[ 1] >>  4 ) dst[1] = color [ src[ 1] >>  4 ];
-				if ( src[ 3] & 0xf ) dst[2] = color [ src[ 3] & 0xf ];
-				if ( src[ 3] >>  4 ) dst[3] = color [ src[ 3] >>  4 ];
-				if ( src[ 5] & 0xf ) dst[4] = color [ src[ 5] & 0xf ];
-				if ( src[ 5] >>  4 ) dst[5] = color [ src[ 5] >>  4 ];
-				if ( src[ 7] & 0xf ) dst[6] = color [ src[ 7] & 0xf ];
-				if ( src[ 7] >>  4 ) dst[7] = color [ src[ 7] >>  4 ];
+			for (int i = 0; i < 8; i++, dst -= cps3_gfx_width, src += 8)
+			{
+				if (src[1] & 0xf)
+					dst[0] = color[src[1] & 0xf];
+				if (src[1] >> 4)
+					dst[1] = color[src[1] >> 4];
+				if (src[3] & 0xf)
+					dst[2] = color[src[3] & 0xf];
+				if (src[3] >> 4)
+					dst[3] = color[src[3] >> 4];
+				if (src[5] & 0xf)
+					dst[4] = color[src[5] & 0xf];
+				if (src[5] >> 4)
+					dst[5] = color[src[5] >> 4];
+				if (src[7] & 0xf)
+					dst[6] = color[src[7] & 0xf];
+				if (src[7] >> 4)
+					dst[7] = color[src[7] >> 4];
 			}
-
-	} else {
-		if ( flipx )
-			for(int i=0; i<8; i++, dst+= cps3_gfx_width, src += 8) {
-				if ( src[ 1] & 0xf ) dst[7] = color [ src[ 1] & 0xf ];
-				if ( src[ 1] >>  4 ) dst[6] = color [ src[ 1] >>  4 ];
-				if ( src[ 3] & 0xf ) dst[5] = color [ src[ 3] & 0xf ];
-				if ( src[ 3] >>  4 ) dst[4] = color [ src[ 3] >>  4 ];
-				if ( src[ 5] & 0xf ) dst[3] = color [ src[ 5] & 0xf ];
-				if ( src[ 5] >>  4 ) dst[2] = color [ src[ 5] >>  4 ];
-				if ( src[ 7] & 0xf ) dst[1] = color [ src[ 7] & 0xf ];
-				if ( src[ 7] >>  4 ) dst[0] = color [ src[ 7] >>  4 ];
+	}
+	else
+	{
+		if (flipx)
+			for (int i = 0; i < 8; i++, dst += cps3_gfx_width, src += 8)
+			{
+				if (src[1] & 0xf)
+					dst[7] = color[src[1] & 0xf];
+				if (src[1] >> 4)
+					dst[6] = color[src[1] >> 4];
+				if (src[3] & 0xf)
+					dst[5] = color[src[3] & 0xf];
+				if (src[3] >> 4)
+					dst[4] = color[src[3] >> 4];
+				if (src[5] & 0xf)
+					dst[3] = color[src[5] & 0xf];
+				if (src[5] >> 4)
+					dst[2] = color[src[5] >> 4];
+				if (src[7] & 0xf)
+					dst[1] = color[src[7] & 0xf];
+				if (src[7] >> 4)
+					dst[0] = color[src[7] >> 4];
 			}
 		else
-			for(int i=0; i<8; i++, dst+= cps3_gfx_width, src += 8) {
-				if ( src[ 1 ] & 0xf ) dst[0] = color [ src[ 1 ] & 0xf ];
-				if ( src[ 1 ] >>  4 ) dst[1] = color [ src[ 1 ] >>  4 ];
-				if ( src[ 3 ] & 0xf ) dst[2] = color [ src[ 3 ] & 0xf ];
-				if ( src[ 3 ] >>  4 ) dst[3] = color [ src[ 3 ] >>  4 ];
-				if ( src[ 5 ] & 0xf ) dst[4] = color [ src[ 5 ] & 0xf ];
-				if ( src[ 5 ] >>  4 ) dst[5] = color [ src[ 5 ] >>  4 ];
-				if ( src[ 7 ] & 0xf ) dst[6] = color [ src[ 7 ] & 0xf ];
-				if ( src[ 7 ] >>  4 ) dst[7] = color [ src[ 7 ] >>  4 ];
+			for (int i = 0; i < 8; i++, dst += cps3_gfx_width, src += 8)
+			{
+				if (src[1] & 0xf)
+					dst[0] = color[src[1] & 0xf];
+				if (src[1] >> 4)
+					dst[1] = color[src[1] >> 4];
+				if (src[3] & 0xf)
+					dst[2] = color[src[3] & 0xf];
+				if (src[3] >> 4)
+					dst[3] = color[src[3] >> 4];
+				if (src[5] & 0xf)
+					dst[4] = color[src[5] & 0xf];
+				if (src[5] >> 4)
+					dst[5] = color[src[5] >> 4];
+				if (src[7] & 0xf)
+					dst[6] = color[src[7] & 0xf];
+				if (src[7] >> 4)
+					dst[7] = color[src[7] >> 4];
 			}
 	}
 #else
-      if ( flipx )
-         for(INT32 i=0; i<8; i++, dst-= cps3_gfx_width, src += 8) {
-            if ( src[ 2] & 0xf ) dst[7] = color [ src[ 2] & 0xf ];
-            if ( src[ 2] >>  4 ) dst[6] = color [ src[ 2] >>  4 ];
-            if ( src[ 0] & 0xf ) dst[5] = color [ src[ 0] & 0xf ];
-            if ( src[ 0] >>  4 ) dst[4] = color [ src[ 0] >>  4 ];
-            if ( src[ 6] & 0xf ) dst[3] = color [ src[ 6] & 0xf ];
-            if ( src[ 6] >>  4 ) dst[2] = color [ src[ 6] >>  4 ];
-            if ( src[ 4] & 0xf ) dst[1] = color [ src[ 4] & 0xf ];
-            if ( src[ 4] >>  4 ) dst[0] = color [ src[ 4] >>  4 ];
-         }
-      else
-         for(INT32 i=0; i<8; i++, dst-= cps3_gfx_width, src += 8) {
-            if ( src[ 2] & 0xf ) dst[0] = color [ src[ 2] & 0xf ];
-            if ( src[ 2] >>  4 ) dst[1] = color [ src[ 2] >>  4 ];
-            if ( src[ 0] & 0xf ) dst[2] = color [ src[ 0] & 0xf ];
-            if ( src[ 0] >>  4 ) dst[3] = color [ src[ 0] >>  4 ];
-            if ( src[ 6] & 0xf ) dst[4] = color [ src[ 6] & 0xf ];
-            if ( src[ 6] >>  4 ) dst[5] = color [ src[ 6] >>  4 ];
-            if ( src[ 4] & 0xf ) dst[6] = color [ src[ 4] & 0xf ];
-            if ( src[ 4] >>  4 ) dst[7] = color [ src[ 4] >>  4 ];
-         }
-
-   } else {
-      if ( flipx )
-         for(INT32 i=0; i<8; i++, dst+= cps3_gfx_width, src += 8) {
-            if ( src[ 2] & 0xf ) dst[7] = color [ src[ 2] & 0xf ];
-            if ( src[ 2] >>  4 ) dst[6] = color [ src[ 2] >>  4 ];
-            if ( src[ 0] & 0xf ) dst[5] = color [ src[ 0] & 0xf ];
-            if ( src[ 0] >>  4 ) dst[4] = color [ src[ 0] >>  4 ];
-            if ( src[ 6] & 0xf ) dst[3] = color [ src[ 6] & 0xf ];
-            if ( src[ 6] >>  4 ) dst[2] = color [ src[ 6] >>  4 ];
-            if ( src[ 4] & 0xf ) dst[1] = color [ src[ 4] & 0xf ];
-            if ( src[ 4] >>  4 ) dst[0] = color [ src[ 4] >>  4 ];
-         }
-      else
-         for(INT32 i=0; i<8; i++, dst+= cps3_gfx_width, src += 8) {
-            if ( src[ 2] & 0xf ) dst[0] = color [ src[ 2] & 0xf ];
-            if ( src[ 2] >>  4 ) dst[1] = color [ src[ 2] >>  4 ];
-            if ( src[ 0] & 0xf ) dst[2] = color [ src[ 0] & 0xf ];
-            if ( src[ 0] >>  4 ) dst[3] = color [ src[ 0] >>  4 ];
-            if ( src[ 6] & 0xf ) dst[4] = color [ src[ 6] & 0xf ];
-            if ( src[ 6] >>  4 ) dst[5] = color [ src[ 6] >>  4 ];
-            if ( src[ 4] & 0xf ) dst[6] = color [ src[ 4] & 0xf ];
-            if ( src[ 4] >>  4 ) dst[7] = color [ src[ 4] >>  4 ];
-         }
-   }
+		if (flipx)
+			for (INT32 i = 0; i < 8; i++, dst -= cps3_gfx_width, src += 8)
+			{
+				if (src[2] & 0xf)
+					dst[7] = color[src[2] & 0xf];
+				if (src[2] >> 4)
+					dst[6] = color[src[2] >> 4];
+				if (src[0] & 0xf)
+					dst[5] = color[src[0] & 0xf];
+				if (src[0] >> 4)
+					dst[4] = color[src[0] >> 4];
+				if (src[6] & 0xf)
+					dst[3] = color[src[6] & 0xf];
+				if (src[6] >> 4)
+					dst[2] = color[src[6] >> 4];
+				if (src[4] & 0xf)
+					dst[1] = color[src[4] & 0xf];
+				if (src[4] >> 4)
+					dst[0] = color[src[4] >> 4];
+			}
+		else
+			for (INT32 i = 0; i < 8; i++, dst -= cps3_gfx_width, src += 8)
+			{
+				if (src[2] & 0xf)
+					dst[0] = color[src[2] & 0xf];
+				if (src[2] >> 4)
+					dst[1] = color[src[2] >> 4];
+				if (src[0] & 0xf)
+					dst[2] = color[src[0] & 0xf];
+				if (src[0] >> 4)
+					dst[3] = color[src[0] >> 4];
+				if (src[6] & 0xf)
+					dst[4] = color[src[6] & 0xf];
+				if (src[6] >> 4)
+					dst[5] = color[src[6] >> 4];
+				if (src[4] & 0xf)
+					dst[6] = color[src[4] & 0xf];
+				if (src[4] >> 4)
+					dst[7] = color[src[4] >> 4];
+			}
+	}
+	else
+	{
+		if (flipx)
+			for (INT32 i = 0; i < 8; i++, dst += cps3_gfx_width, src += 8)
+			{
+				if (src[2] & 0xf)
+					dst[7] = color[src[2] & 0xf];
+				if (src[2] >> 4)
+					dst[6] = color[src[2] >> 4];
+				if (src[0] & 0xf)
+					dst[5] = color[src[0] & 0xf];
+				if (src[0] >> 4)
+					dst[4] = color[src[0] >> 4];
+				if (src[6] & 0xf)
+					dst[3] = color[src[6] & 0xf];
+				if (src[6] >> 4)
+					dst[2] = color[src[6] >> 4];
+				if (src[4] & 0xf)
+					dst[1] = color[src[4] & 0xf];
+				if (src[4] >> 4)
+					dst[0] = color[src[4] >> 4];
+			}
+		else
+			for (INT32 i = 0; i < 8; i++, dst += cps3_gfx_width, src += 8)
+			{
+				if (src[2] & 0xf)
+					dst[0] = color[src[2] & 0xf];
+				if (src[2] >> 4)
+					dst[1] = color[src[2] >> 4];
+				if (src[0] & 0xf)
+					dst[2] = color[src[0] & 0xf];
+				if (src[0] >> 4)
+					dst[3] = color[src[0] >> 4];
+				if (src[6] & 0xf)
+					dst[4] = color[src[6] & 0xf];
+				if (src[6] >> 4)
+					dst[5] = color[src[6] >> 4];
+				if (src[4] & 0xf)
+					dst[6] = color[src[4] & 0xf];
+				if (src[4] >> 4)
+					dst[7] = color[src[4] >> 4];
+			}
+	}
 #endif
 }
 
 static void cps3_drawgfxzoom_1(UINT32 code, UINT32 pal, INT32 flipx, INT32 flipy, INT32 x, INT32 y, INT32 drawline)
 {
-	UINT32 * dst = RamScreen;
-	UINT8 * src  = (UINT8 *) RamCRam;
-	dst         += (drawline * 1024 + x);
+	UINT32 *dst = RamScreen;
+	UINT8 *src = (UINT8 *)RamCRam;
+	dst += (drawline * 1024 + x);
 
 #if BE_GFX
-	if ( flipy )
-   {
+	if (flipy)
+	{
 		src += code * 256 + 16 * (15 - (drawline - y));
-		if ( flipx )
-      {
-			if ( src[ 0] ) dst[15] = src[ 0] | pal;
-			if ( src[ 1] ) dst[14] = src[ 1] | pal;
-			if ( src[ 2] ) dst[13] = src[ 2] | pal;
-			if ( src[ 3] ) dst[12] = src[ 3] | pal;
-			if ( src[ 4] ) dst[11] = src[ 4] | pal;
-			if ( src[ 5] ) dst[10] = src[ 5] | pal;
-			if ( src[ 6] ) dst[ 9] = src[ 6] | pal;
-			if ( src[ 7] ) dst[ 8] = src[ 7] | pal;
-			if ( src[ 8] ) dst[ 7] = src[ 8] | pal;
-			if ( src[ 9] ) dst[ 6] = src[ 9] | pal;
-			if ( src[10] ) dst[ 5] = src[10] | pal;
-			if ( src[11] ) dst[ 4] = src[11] | pal;
-			if ( src[12] ) dst[ 3] = src[12] | pal;
-			if ( src[13] ) dst[ 2] = src[13] | pal;
-			if ( src[14] ) dst[ 1] = src[14] | pal;
-			if ( src[15] ) dst[ 0] = src[15] | pal;
+		if (flipx)
+		{
+			if (src[0])
+				dst[15] = src[0] | pal;
+			if (src[1])
+				dst[14] = src[1] | pal;
+			if (src[2])
+				dst[13] = src[2] | pal;
+			if (src[3])
+				dst[12] = src[3] | pal;
+			if (src[4])
+				dst[11] = src[4] | pal;
+			if (src[5])
+				dst[10] = src[5] | pal;
+			if (src[6])
+				dst[9] = src[6] | pal;
+			if (src[7])
+				dst[8] = src[7] | pal;
+			if (src[8])
+				dst[7] = src[8] | pal;
+			if (src[9])
+				dst[6] = src[9] | pal;
+			if (src[10])
+				dst[5] = src[10] | pal;
+			if (src[11])
+				dst[4] = src[11] | pal;
+			if (src[12])
+				dst[3] = src[12] | pal;
+			if (src[13])
+				dst[2] = src[13] | pal;
+			if (src[14])
+				dst[1] = src[14] | pal;
+			if (src[15])
+				dst[0] = src[15] | pal;
 		}
-      else
-      {
-			if ( src[ 0] ) dst[ 0] = src[ 0] | pal;
-			if ( src[ 1] ) dst[ 1] = src[ 1] | pal;
-			if ( src[ 2] ) dst[ 2] = src[ 2] | pal;
-			if ( src[ 3] ) dst[ 3] = src[ 3] | pal;
-			if ( src[ 4] ) dst[ 4] = src[ 4] | pal;
-			if ( src[ 5] ) dst[ 5] = src[ 5] | pal;
-			if ( src[ 6] ) dst[ 6] = src[ 6] | pal;
-			if ( src[ 7] ) dst[ 7] = src[ 7] | pal;
-			if ( src[ 8] ) dst[ 8] = src[ 8] | pal;
-			if ( src[ 9] ) dst[ 9] = src[ 9] | pal;
-			if ( src[10] ) dst[10] = src[10] | pal;
-			if ( src[11] ) dst[11] = src[11] | pal;
-			if ( src[12] ) dst[12] = src[12] | pal;
-			if ( src[13] ) dst[13] = src[13] | pal;
-			if ( src[14] ) dst[14] = src[14] | pal;
-			if ( src[15] ) dst[15] = src[15] | pal;
+		else
+		{
+			if (src[0])
+				dst[0] = src[0] | pal;
+			if (src[1])
+				dst[1] = src[1] | pal;
+			if (src[2])
+				dst[2] = src[2] | pal;
+			if (src[3])
+				dst[3] = src[3] | pal;
+			if (src[4])
+				dst[4] = src[4] | pal;
+			if (src[5])
+				dst[5] = src[5] | pal;
+			if (src[6])
+				dst[6] = src[6] | pal;
+			if (src[7])
+				dst[7] = src[7] | pal;
+			if (src[8])
+				dst[8] = src[8] | pal;
+			if (src[9])
+				dst[9] = src[9] | pal;
+			if (src[10])
+				dst[10] = src[10] | pal;
+			if (src[11])
+				dst[11] = src[11] | pal;
+			if (src[12])
+				dst[12] = src[12] | pal;
+			if (src[13])
+				dst[13] = src[13] | pal;
+			if (src[14])
+				dst[14] = src[14] | pal;
+			if (src[15])
+				dst[15] = src[15] | pal;
 		}
 	}
-   else
-   {
+	else
+	{
 		src += code * 256 + 16 * (drawline - y);
-		if ( flipx ) {
-			if ( src[ 0] ) dst[15] = src[ 0] | pal;
-			if ( src[ 1] ) dst[14] = src[ 1] | pal;
-			if ( src[ 2] ) dst[13] = src[ 2] | pal;
-			if ( src[ 3] ) dst[12] = src[ 3] | pal;
-			if ( src[ 4] ) dst[11] = src[ 4] | pal;
-			if ( src[ 5] ) dst[10] = src[ 5] | pal;
-			if ( src[ 6] ) dst[ 9] = src[ 6] | pal;
-			if ( src[ 7] ) dst[ 8] = src[ 7] | pal;
-			if ( src[ 8] ) dst[ 7] = src[ 8] | pal;
-			if ( src[ 9] ) dst[ 6] = src[ 9] | pal;
-			if ( src[10] ) dst[ 5] = src[10] | pal;
-			if ( src[11] ) dst[ 4] = src[11] | pal;
-			if ( src[12] ) dst[ 3] = src[12] | pal;
-			if ( src[13] ) dst[ 2] = src[13] | pal;
-			if ( src[14] ) dst[ 1] = src[14] | pal;
-			if ( src[15] ) dst[ 0] = src[15] | pal;
-		} else {
-			if ( src[ 0] ) dst[ 0] = src[ 0] | pal;
-			if ( src[ 1] ) dst[ 1] = src[ 1] | pal;
-			if ( src[ 2] ) dst[ 2] = src[ 2] | pal;
-			if ( src[ 3] ) dst[ 3] = src[ 3] | pal;
-			if ( src[ 4] ) dst[ 4] = src[ 4] | pal;
-			if ( src[ 5] ) dst[ 5] = src[ 5] | pal;
-			if ( src[ 6] ) dst[ 6] = src[ 6] | pal;
-			if ( src[ 7] ) dst[ 7] = src[ 7] | pal;
-			if ( src[ 8] ) dst[ 8] = src[ 8] | pal;
-			if ( src[ 9] ) dst[ 9] = src[ 9] | pal;
-			if ( src[10] ) dst[10] = src[10] | pal;
-			if ( src[11] ) dst[11] = src[11] | pal;
-			if ( src[12] ) dst[12] = src[12] | pal;
-			if ( src[13] ) dst[13] = src[13] | pal;
-			if ( src[14] ) dst[14] = src[14] | pal;
-			if ( src[15] ) dst[15] = src[15] | pal;
+		if (flipx)
+		{
+			if (src[0])
+				dst[15] = src[0] | pal;
+			if (src[1])
+				dst[14] = src[1] | pal;
+			if (src[2])
+				dst[13] = src[2] | pal;
+			if (src[3])
+				dst[12] = src[3] | pal;
+			if (src[4])
+				dst[11] = src[4] | pal;
+			if (src[5])
+				dst[10] = src[5] | pal;
+			if (src[6])
+				dst[9] = src[6] | pal;
+			if (src[7])
+				dst[8] = src[7] | pal;
+			if (src[8])
+				dst[7] = src[8] | pal;
+			if (src[9])
+				dst[6] = src[9] | pal;
+			if (src[10])
+				dst[5] = src[10] | pal;
+			if (src[11])
+				dst[4] = src[11] | pal;
+			if (src[12])
+				dst[3] = src[12] | pal;
+			if (src[13])
+				dst[2] = src[13] | pal;
+			if (src[14])
+				dst[1] = src[14] | pal;
+			if (src[15])
+				dst[0] = src[15] | pal;
+		}
+		else
+		{
+			if (src[0])
+				dst[0] = src[0] | pal;
+			if (src[1])
+				dst[1] = src[1] | pal;
+			if (src[2])
+				dst[2] = src[2] | pal;
+			if (src[3])
+				dst[3] = src[3] | pal;
+			if (src[4])
+				dst[4] = src[4] | pal;
+			if (src[5])
+				dst[5] = src[5] | pal;
+			if (src[6])
+				dst[6] = src[6] | pal;
+			if (src[7])
+				dst[7] = src[7] | pal;
+			if (src[8])
+				dst[8] = src[8] | pal;
+			if (src[9])
+				dst[9] = src[9] | pal;
+			if (src[10])
+				dst[10] = src[10] | pal;
+			if (src[11])
+				dst[11] = src[11] | pal;
+			if (src[12])
+				dst[12] = src[12] | pal;
+			if (src[13])
+				dst[13] = src[13] | pal;
+			if (src[14])
+				dst[14] = src[14] | pal;
+			if (src[15])
+				dst[15] = src[15] | pal;
 		}
 	}
 #else
-	if ( flipy )
-   {
+	if (flipy)
+	{
 		src += code * 256 + 16 * (15 - (drawline - y));
-		if ( flipx )
-      {
-			if ( src[ 3] ) dst[15] = src[ 3] | pal;
-			if ( src[ 2] ) dst[14] = src[ 2] | pal;
-			if ( src[ 1] ) dst[13] = src[ 1] | pal;
-			if ( src[ 0] ) dst[12] = src[ 0] | pal;
-			if ( src[ 7] ) dst[11] = src[ 7] | pal;
-			if ( src[ 6] ) dst[10] = src[ 6] | pal;
-			if ( src[ 5] ) dst[ 9] = src[ 5] | pal;
-			if ( src[ 4] ) dst[ 8] = src[ 4] | pal;
-			if ( src[11] ) dst[ 7] = src[11] | pal;
-			if ( src[10] ) dst[ 6] = src[10] | pal;
-			if ( src[ 9] ) dst[ 5] = src[ 9] | pal;
-			if ( src[ 8] ) dst[ 4] = src[ 8] | pal;
-			if ( src[15] ) dst[ 3] = src[15] | pal;
-			if ( src[14] ) dst[ 2] = src[14] | pal;
-			if ( src[13] ) dst[ 1] = src[13] | pal;
-			if ( src[12] ) dst[ 0] = src[12] | pal;
+		if (flipx)
+		{
+			if (src[3])
+				dst[15] = src[3] | pal;
+			if (src[2])
+				dst[14] = src[2] | pal;
+			if (src[1])
+				dst[13] = src[1] | pal;
+			if (src[0])
+				dst[12] = src[0] | pal;
+			if (src[7])
+				dst[11] = src[7] | pal;
+			if (src[6])
+				dst[10] = src[6] | pal;
+			if (src[5])
+				dst[9] = src[5] | pal;
+			if (src[4])
+				dst[8] = src[4] | pal;
+			if (src[11])
+				dst[7] = src[11] | pal;
+			if (src[10])
+				dst[6] = src[10] | pal;
+			if (src[9])
+				dst[5] = src[9] | pal;
+			if (src[8])
+				dst[4] = src[8] | pal;
+			if (src[15])
+				dst[3] = src[15] | pal;
+			if (src[14])
+				dst[2] = src[14] | pal;
+			if (src[13])
+				dst[1] = src[13] | pal;
+			if (src[12])
+				dst[0] = src[12] | pal;
 		}
-      else
-      {
-			if ( src[ 3] ) dst[ 0] = src[ 3] | pal;
-			if ( src[ 2] ) dst[ 1] = src[ 2] | pal;
-			if ( src[ 1] ) dst[ 2] = src[ 1] | pal;
-			if ( src[ 0] ) dst[ 3] = src[ 0] | pal;
-			if ( src[ 7] ) dst[ 4] = src[ 7] | pal;
-			if ( src[ 6] ) dst[ 5] = src[ 6] | pal;
-			if ( src[ 5] ) dst[ 6] = src[ 5] | pal;
-			if ( src[ 4] ) dst[ 7] = src[ 4] | pal;
-			if ( src[11] ) dst[ 8] = src[11] | pal;
-			if ( src[10] ) dst[ 9] = src[10] | pal;
-			if ( src[ 9] ) dst[10] = src[ 9] | pal;
-			if ( src[ 8] ) dst[11] = src[ 8] | pal;
-			if ( src[15] ) dst[12] = src[15] | pal;
-			if ( src[14] ) dst[13] = src[14] | pal;
-			if ( src[13] ) dst[14] = src[13] | pal;
-			if ( src[12] ) dst[15] = src[12] | pal;
+		else
+		{
+			if (src[3])
+				dst[0] = src[3] | pal;
+			if (src[2])
+				dst[1] = src[2] | pal;
+			if (src[1])
+				dst[2] = src[1] | pal;
+			if (src[0])
+				dst[3] = src[0] | pal;
+			if (src[7])
+				dst[4] = src[7] | pal;
+			if (src[6])
+				dst[5] = src[6] | pal;
+			if (src[5])
+				dst[6] = src[5] | pal;
+			if (src[4])
+				dst[7] = src[4] | pal;
+			if (src[11])
+				dst[8] = src[11] | pal;
+			if (src[10])
+				dst[9] = src[10] | pal;
+			if (src[9])
+				dst[10] = src[9] | pal;
+			if (src[8])
+				dst[11] = src[8] | pal;
+			if (src[15])
+				dst[12] = src[15] | pal;
+			if (src[14])
+				dst[13] = src[14] | pal;
+			if (src[13])
+				dst[14] = src[13] | pal;
+			if (src[12])
+				dst[15] = src[12] | pal;
 		}
 	}
-   else
-   {
+	else
+	{
 		src += code * 256 + 16 * (drawline - y);
-		if ( flipx )
-      {
-			if ( src[ 3] ) dst[15] = src[ 3] | pal;
-			if ( src[ 2] ) dst[14] = src[ 2] | pal;
-			if ( src[ 1] ) dst[13] = src[ 1] | pal;
-			if ( src[ 0] ) dst[12] = src[ 0] | pal;
-			if ( src[ 7] ) dst[11] = src[ 7] | pal;
-			if ( src[ 6] ) dst[10] = src[ 6] | pal;
-			if ( src[ 5] ) dst[ 9] = src[ 5] | pal;
-			if ( src[ 4] ) dst[ 8] = src[ 4] | pal;
-			if ( src[11] ) dst[ 7] = src[11] | pal;
-			if ( src[10] ) dst[ 6] = src[10] | pal;
-			if ( src[ 9] ) dst[ 5] = src[ 9] | pal;
-			if ( src[ 8] ) dst[ 4] = src[ 8] | pal;
-			if ( src[15] ) dst[ 3] = src[15] | pal;
-			if ( src[14] ) dst[ 2] = src[14] | pal;
-			if ( src[13] ) dst[ 1] = src[13] | pal;
-			if ( src[12] ) dst[ 0] = src[12] | pal;
+		if (flipx)
+		{
+			if (src[3])
+				dst[15] = src[3] | pal;
+			if (src[2])
+				dst[14] = src[2] | pal;
+			if (src[1])
+				dst[13] = src[1] | pal;
+			if (src[0])
+				dst[12] = src[0] | pal;
+			if (src[7])
+				dst[11] = src[7] | pal;
+			if (src[6])
+				dst[10] = src[6] | pal;
+			if (src[5])
+				dst[9] = src[5] | pal;
+			if (src[4])
+				dst[8] = src[4] | pal;
+			if (src[11])
+				dst[7] = src[11] | pal;
+			if (src[10])
+				dst[6] = src[10] | pal;
+			if (src[9])
+				dst[5] = src[9] | pal;
+			if (src[8])
+				dst[4] = src[8] | pal;
+			if (src[15])
+				dst[3] = src[15] | pal;
+			if (src[14])
+				dst[2] = src[14] | pal;
+			if (src[13])
+				dst[1] = src[13] | pal;
+			if (src[12])
+				dst[0] = src[12] | pal;
 		}
-      else
-      {
-			if ( src[ 3] ) dst[ 0] = src[ 3] | pal;
-			if ( src[ 2] ) dst[ 1] = src[ 2] | pal;
-			if ( src[ 1] ) dst[ 2] = src[ 1] | pal;
-			if ( src[ 0] ) dst[ 3] = src[ 0] | pal;
-			if ( src[ 7] ) dst[ 4] = src[ 7] | pal;
-			if ( src[ 6] ) dst[ 5] = src[ 6] | pal;
-			if ( src[ 5] ) dst[ 6] = src[ 5] | pal;
-			if ( src[ 4] ) dst[ 7] = src[ 4] | pal;
-			if ( src[11] ) dst[ 8] = src[11] | pal;
-			if ( src[10] ) dst[ 9] = src[10] | pal;
-			if ( src[ 9] ) dst[10] = src[ 9] | pal;
-			if ( src[ 8] ) dst[11] = src[ 8] | pal;
-			if ( src[15] ) dst[12] = src[15] | pal;
-			if ( src[14] ) dst[13] = src[14] | pal;
-			if ( src[13] ) dst[14] = src[13] | pal;
-			if ( src[12] ) dst[15] = src[12] | pal;
+		else
+		{
+			if (src[3])
+				dst[0] = src[3] | pal;
+			if (src[2])
+				dst[1] = src[2] | pal;
+			if (src[1])
+				dst[2] = src[1] | pal;
+			if (src[0])
+				dst[3] = src[0] | pal;
+			if (src[7])
+				dst[4] = src[7] | pal;
+			if (src[6])
+				dst[5] = src[6] | pal;
+			if (src[5])
+				dst[6] = src[5] | pal;
+			if (src[4])
+				dst[7] = src[4] | pal;
+			if (src[11])
+				dst[8] = src[11] | pal;
+			if (src[10])
+				dst[9] = src[10] | pal;
+			if (src[9])
+				dst[10] = src[9] | pal;
+			if (src[8])
+				dst[11] = src[8] | pal;
+			if (src[15])
+				dst[12] = src[15] | pal;
+			if (src[14])
+				dst[13] = src[14] | pal;
+			if (src[13])
+				dst[14] = src[13] | pal;
+			if (src[12])
+				dst[15] = src[12] | pal;
 		}
 	}
 
@@ -1714,9 +1970,9 @@ static void cps3_drawgfxzoom_1(UINT32 code, UINT32 pal, INT32 flipx, INT32 flipy
 
 static void cps3_drawgfxzoom_2(UINT32 code, UINT32 pal, INT32 flipx, INT32 flipy, INT32 sx, INT32 sy, INT32 scalex, INT32 scaley, INT32 alpha)
 {
-	UINT8 * source_base        = (UINT8 *) RamCRam + code * 256;
+	UINT8 *source_base = (UINT8 *)RamCRam + code * 256;
 	INT32 sprite_screen_height = (scaley * 16 + 0x8000) >> 16;
-	INT32 sprite_screen_width  = (scalex * 16 + 0x8000) >> 16;	
+	INT32 sprite_screen_width = (scalex * 16 + 0x8000) >> 16;
 	if (sprite_screen_width && sprite_screen_height)
 	{
 		// compute sprite increment per screen pixel
@@ -1727,180 +1983,186 @@ static void cps3_drawgfxzoom_2(UINT32 code, UINT32 pal, INT32 flipx, INT32 flipy
 		INT32 ey = sy + sprite_screen_height;
 
 		INT32 x_index_base = 0;
-		INT32 y_index      = 0;
+		INT32 y_index = 0;
 
-		if( flipx )
+		if (flipx)
 		{
 			x_index_base = (sprite_screen_width - 1) * dx;
 			dx = -dx;
 		}
 
-		if( flipy )
+		if (flipy)
 		{
 			y_index = (sprite_screen_height - 1) * dy;
 			dy = -dy;
 		}
 
 		{
-			if( sx < 0) /* clip left */
+			if (sx < 0) /* clip left */
 			{
-				INT32 pixels = 0-sx;
+				INT32 pixels = 0 - sx;
 				sx += pixels;
-				x_index_base += pixels*dx;
+				x_index_base += pixels * dx;
 			}
-			if( sy < 0 ) /* clip top */
+			if (sy < 0) /* clip top */
 			{
-				INT32 pixels = 0-sy;
+				INT32 pixels = 0 - sy;
 				sy += pixels;
-				y_index += pixels*dy;
+				y_index += pixels * dy;
 			}
-			if( ex > cps3_gfx_max_x+1 ) /* clip right */
+			if (ex > cps3_gfx_max_x + 1) /* clip right */
 			{
-				INT32 pixels = ex-cps3_gfx_max_x-1;
+				INT32 pixels = ex - cps3_gfx_max_x - 1;
 				ex -= pixels;
 			}
-			if( ey > cps3_gfx_max_y+1 ) /* clip bottom */
+			if (ey > cps3_gfx_max_y + 1) /* clip bottom */
 			{
-				INT32 pixels = ey-cps3_gfx_max_y-1;
+				INT32 pixels = ey - cps3_gfx_max_y - 1;
 				ey -= pixels;
 			}
 		}
 
-		if( ex > sx )
-      {
-			switch( alpha )
-         {
-           case 0:
-               for( INT32 y=sy; y<ey; y++ )
-               {
-                  UINT8 * source = source_base + (y_index>>16) * 16;
-                  UINT32 * dest  = RamScreen + y * 512 * 2;
-                  
-                  // Optimized NEON path for 1:1 scale (dx=0x10000)
-                  #ifdef VITA
-                  if (dx == 0x10000) {
-                      cps3_drawgfxzoom_2_neon_opaque(source + (x_index_base >> 16), dest + sx, ex - sx, pal);
-                      y_index += dy;
-                      continue;
-                  } else {
-                      // NEON path for Zoom (Manual Gather)
-                      cps3_drawgfxzoom_2_neon_zoom_opaque(source, dest + sx, ex - sx, pal, x_index_base, dx);
-                      y_index += dy;
-                      continue;
-                  }
-                  #endif
-                  
-                  INT32 x_index  = x_index_base;
-                  for(INT32 x=sx; x<ex; x++ )
-                  {
-#if BE_GFX
-                     UINT8 c    = source[ (x_index>>16) ];
-#else
-                     UINT8 c    = source[ (x_index>>16) ^ 3 ];
-#endif
-                     if( c )
-                        dest[x] = pal | c;
-                     x_index   += dx;
-                  }
-                  y_index += dy;
-               }
-               break;
-            case 6:
-               for( INT32 y=sy; y<ey; y++ )
-               {
-                  UINT8 * source = source_base + (y_index>>16) * 16;
-                  UINT32 * dest = RamScreen + y * 512 * 2;
-                  
-                  // Optimized NEON path for 1:1 scale (dx=0x10000)
-                  #ifdef VITA
-                  if (dx == 0x10000) {
-                      cps3_drawgfxzoom_2_neon_alpha6(source + (x_index_base >> 16), dest + sx, ex - sx);
-                      y_index += dy;
-                      continue;
-                  }
-                  #endif
+		if (ex > sx)
+		{
+			switch (alpha)
+			{
+			case 0:
+				for (INT32 y = sy; y < ey; y++)
+				{
+					UINT8 *source = source_base + (y_index >> 16) * 16;
+					UINT32 *dest = RamScreen + y * 512 * 2;
 
-                  INT32 x_index = x_index_base;
-                  for(INT32 x=sx; x<ex; x++ )
-                  {
-#if BE_GFX
-                     UINT8 c  = source[ (x_index>>16)];
-#else
-                     UINT8 c  = source[ (x_index>>16) ^ 3 ];
-#endif
-                     dest[x] |= ((c&0x0000f) << 13);
-                     x_index += dx;
-                  }
-                  y_index += dy;
-               }
-               break;
-            case 8:
-               for( INT32 y=sy; y<ey; y++ )
-               {
-                  UINT8 * source = source_base + (y_index>>16) * 16;
-                  UINT32 * dest  = RamScreen + y * 512 * 2;
-                  INT32 x_index  = x_index_base;
-                  for(INT32 x=sx; x<ex; x++ )
-                  {
-#if BE_GFX
-                     UINT8 c = source[ (x_index>>16) ];
-#else
-                     UINT8 c = source[ (x_index>>16) ^ 3 ];
+// Optimized NEON path for 1:1 scale (dx=0x10000)
+#ifdef VITA
+					if (dx == 0x10000)
+					{
+						cps3_drawgfxzoom_2_neon_opaque(source + (x_index_base >> 16), dest + sx, ex - sx, pal);
+						y_index += dy;
+						continue;
+					}
+					else
+					{
+						// NEON path for Zoom (Manual Gather)
+						cps3_drawgfxzoom_2_neon_zoom_opaque(source, dest + sx, ex - sx, pal, x_index_base, dx);
+						y_index += dy;
+						continue;
+					}
 #endif
 
-                     if (c)
-                     {
-                        dest[x] |= 0x8000;
-                        if (pal&0x10000)
-                           dest[x] |= 0x10000;
-                     }
-                     x_index += dx;
-                  }
-                  y_index += dy;
-               }
-               break;
-         }
+					INT32 x_index = x_index_base;
+					for (INT32 x = sx; x < ex; x++)
+					{
+#if BE_GFX
+						UINT8 c = source[(x_index >> 16)];
+#else
+						UINT8 c = source[(x_index >> 16) ^ 3];
+#endif
+						if (c)
+							dest[x] = pal | c;
+						x_index += dx;
+					}
+					y_index += dy;
+				}
+				break;
+			case 6:
+				for (INT32 y = sy; y < ey; y++)
+				{
+					UINT8 *source = source_base + (y_index >> 16) * 16;
+					UINT32 *dest = RamScreen + y * 512 * 2;
+
+// Optimized NEON path for 1:1 scale (dx=0x10000)
+#ifdef VITA
+					if (dx == 0x10000)
+					{
+						cps3_drawgfxzoom_2_neon_alpha6(source + (x_index_base >> 16), dest + sx, ex - sx);
+						y_index += dy;
+						continue;
+					}
+#endif
+
+					INT32 x_index = x_index_base;
+					for (INT32 x = sx; x < ex; x++)
+					{
+#if BE_GFX
+						UINT8 c = source[(x_index >> 16)];
+#else
+						UINT8 c = source[(x_index >> 16) ^ 3];
+#endif
+						dest[x] |= ((c & 0x0000f) << 13);
+						x_index += dx;
+					}
+					y_index += dy;
+				}
+				break;
+			case 8:
+				for (INT32 y = sy; y < ey; y++)
+				{
+					UINT8 *source = source_base + (y_index >> 16) * 16;
+					UINT32 *dest = RamScreen + y * 512 * 2;
+					INT32 x_index = x_index_base;
+					for (INT32 x = sx; x < ex; x++)
+					{
+#if BE_GFX
+						UINT8 c = source[(x_index >> 16)];
+#else
+						UINT8 c = source[(x_index >> 16) ^ 3];
+#endif
+
+						if (c)
+						{
+							dest[x] |= 0x8000;
+							if (pal & 0x10000)
+								dest[x] |= 0x10000;
+						}
+						x_index += dx;
+					}
+					y_index += dy;
+				}
+				break;
+			}
 		}
 	}
 }
 
-static void cps3_draw_tilemapsprite_line(INT32 drawline, UINT32 * regs )
+static void cps3_draw_tilemapsprite_line(INT32 drawline, UINT32 *regs)
 {
-	INT32 scrolly =  ((regs[0]&0x0000ffff)>>0)+4;
-	INT32 line    =  (drawline + scrolly) & 0x3ff;
+	INT32 scrolly = ((regs[0] & 0x0000ffff) >> 0) + 4;
+	INT32 line = (drawline + scrolly) & 0x3ff;
 
-	if (!(regs[1]&0x00008000))
+	if (!(regs[1] & 0x00008000))
 		return;
 
 	{
-		UINT32 mapbase    = ((regs[2]&0x007f0000)>>16) << 10;
-		UINT32 linebase   = ((regs[2]&0x7f000000)>>24) << 10;
-		INT32 linescroll_enable = (regs[1]&0x00004000);
+		UINT32 mapbase = ((regs[2] & 0x007f0000) >> 16) << 10;
+		UINT32 linebase = ((regs[2] & 0x7f000000) >> 24) << 10;
+		INT32 linescroll_enable = (regs[1] & 0x00004000);
 
-		INT32 tileline    = (line/16)+1;
+		INT32 tileline = (line / 16) + 1;
 		INT32 tilesubline = line % 16;
 
-		INT32 scrollx     =  (regs[0]&0xffff0000)>>16;
+		INT32 scrollx = (regs[0] & 0xffff0000) >> 16;
 
 		if (linescroll_enable)
-			scrollx  += (RamSpr[linebase+((line+16-4)&0x3ff)]>>16)&0x3ff;
+			scrollx += (RamSpr[linebase + ((line + 16 - 4) & 0x3ff)] >> 16) & 0x3ff;
 
-		if (drawline>cps3_gfx_max_y+4)
+		if (drawline > cps3_gfx_max_y + 4)
 			return;
 
-		for (INT32 x=0;x<(cps3_gfx_max_x/16)+2;x++)
+		for (INT32 x = 0; x < (cps3_gfx_max_x / 16) + 2; x++)
 		{
-			UINT32 dat   = RamSpr[mapbase+((tileline&63)*64)+((x+scrollx/16)&63)];
-			INT32 tileno = (dat & 0xffff0000)>>17;
-			INT32 colour = (dat & 0x000001ff)>>0;
-			INT32 bpp    = (dat & 0x0000200)>>9;
-			INT32 yflip  = (dat & 0x00000800)>>11;
-			INT32 xflip  = (dat & 0x00001000)>>12;
+			UINT32 dat = RamSpr[mapbase + ((tileline & 63) * 64) + ((x + scrollx / 16) & 63)];
+			INT32 tileno = (dat & 0xffff0000) >> 17;
+			INT32 colour = (dat & 0x000001ff) >> 0;
+			INT32 bpp = (dat & 0x0000200) >> 9;
+			INT32 yflip = (dat & 0x00000800) >> 11;
+			INT32 xflip = (dat & 0x00001000) >> 12;
 
-			if (!bpp) colour <<= 8;
-			else colour <<= 6;
+			if (!bpp)
+				colour <<= 8;
+			else
+				colour <<= 6;
 
-			cps3_drawgfxzoom_1(tileno,colour,xflip,yflip,(x*16)-scrollx%16,drawline-tilesubline, drawline);
+			cps3_drawgfxzoom_1(tileno, colour, xflip, yflip, (x * 16) - scrollx % 16, drawline - tilesubline, drawline);
 		}
 	}
 }
@@ -1910,11 +2172,11 @@ static INT32 WideScreenFrameDelay = 0;
 static void DrvDraw(void)
 {
 	INT32 Width, Height;
-	INT32 bg_drawn[4]              = { 0, 0, 0, 0 };
+	INT32 bg_drawn[4] = {0, 0, 0, 0};
 
-	UINT32 fullscreenzoom          = RamVReg[ 6 * 4 + 3 ] & 0xff;
+	UINT32 fullscreenzoom = RamVReg[6 * 4 + 3] & 0xff;
 	UINT32 fullscreenzoomwidecheck = RamVReg[6 * 4 + 1];
-	
+
 	BurnDrvGetVisibleSize(&Width, &Height);
 	if (((fullscreenzoomwidecheck & 0xffff0000) >> 16) == 0x0265)
 	{
@@ -1936,18 +2198,18 @@ static void DrvDraw(void)
 			WideScreenFrameDelay = GetCurrentFrame() + 1;
 		}
 	}
-	
+
 	if (fullscreenzoom > 0x80)
-      fullscreenzoom = 0x80;
-	UINT32 fsz     = (fullscreenzoom << (16 - 6));
-	cps3_gfx_max_x = ((cps3_gfx_width * fsz)  >> 16) - 1;	// 384 ( 496 for SFIII2 Only)
-	cps3_gfx_max_y = ((cps3_gfx_height * fsz) >> 16) - 1;	// 224
+		fullscreenzoom = 0x80;
+	UINT32 fsz = (fullscreenzoom << (16 - 6));
+	cps3_gfx_max_x = ((cps3_gfx_width * fsz) >> 16) - 1;  // 384 ( 496 for SFIII2 Only)
+	cps3_gfx_max_y = ((cps3_gfx_height * fsz) >> 16) - 1; // 224
 
 	if (nBurnLayer & 1)
 	{
-		UINT32 * pscr = RamScreen;
-		INT32 clrsz   = (cps3_gfx_max_x + 1) * sizeof(INT32);
-		for(INT32 yy = 0; yy<=cps3_gfx_max_y; yy++, pscr += 512*2)
+		UINT32 *pscr = RamScreen;
+		INT32 clrsz = (cps3_gfx_max_x + 1) * sizeof(INT32);
+		for (INT32 yy = 0; yy <= cps3_gfx_max_y; yy++, pscr += 512 * 2)
 			memset(pscr, 0, clrsz);
 	}
 	else
@@ -1958,220 +2220,243 @@ static void DrvDraw(void)
 		for (i = 0; i < 1024 * 448; i++)
 			RamScreen[i] = 0x20000;
 	}
-	
+
 	// Draw Sprites
 	{
-		for (INT32 i=0x00000/4;i<0x2000/4;i+=4) {
-			INT32 xpos		= (RamSpr[i+1]&0x03ff0000)>>16;
-			INT32 ypos		= (RamSpr[i+1]&0x000003ff)>>0;
+		for (INT32 i = 0x00000 / 4; i < 0x2000 / 4; i += 4)
+		{
+			INT32 xpos = (RamSpr[i + 1] & 0x03ff0000) >> 16;
+			INT32 ypos = (RamSpr[i + 1] & 0x000003ff) >> 0;
 
-			INT32 gscroll		= (RamSpr[i+0]&0x70000000)>>28;
-			INT32 length		= (RamSpr[i+0]&0x01ff0000)>>14; // how many entries in the sprite table
-			UINT32 start		= (RamSpr[i+0]&0x00007ff0)>>4;
+			INT32 gscroll = (RamSpr[i + 0] & 0x70000000) >> 28;
+			INT32 length = (RamSpr[i + 0] & 0x01ff0000) >> 14; // how many entries in the sprite table
+			UINT32 start = (RamSpr[i + 0] & 0x00007ff0) >> 4;
 
-			INT32 whichbpp		= (RamSpr[i+2]&0x40000000)>>30; // not 100% sure if this is right, jojo title / characters
-			INT32 whichpal		= (RamSpr[i+2]&0x20000000)>>29;
-			INT32 global_xflip	= (RamSpr[i+2]&0x10000000)>>28;
-			INT32 global_yflip	= (RamSpr[i+2]&0x08000000)>>27;
-			INT32 global_alpha	= (RamSpr[i+2]&0x04000000)>>26; // alpha / shadow? set on sfiii2 shadows, and big black image in jojo intro
-			INT32 global_bpp	= (RamSpr[i+2]&0x02000000)>>25;
-			INT32 global_pal	= (RamSpr[i+2]&0x01ff0000)>>16;
+			INT32 whichbpp = (RamSpr[i + 2] & 0x40000000) >> 30; // not 100% sure if this is right, jojo title / characters
+			INT32 whichpal = (RamSpr[i + 2] & 0x20000000) >> 29;
+			INT32 global_xflip = (RamSpr[i + 2] & 0x10000000) >> 28;
+			INT32 global_yflip = (RamSpr[i + 2] & 0x08000000) >> 27;
+			INT32 global_alpha = (RamSpr[i + 2] & 0x04000000) >> 26; // alpha / shadow? set on sfiii2 shadows, and big black image in jojo intro
+			INT32 global_bpp = (RamSpr[i + 2] & 0x02000000) >> 25;
+			INT32 global_pal = (RamSpr[i + 2] & 0x01ff0000) >> 16;
 
-			INT32 gscrollx		= (RamVReg[gscroll]&0x03ff0000)>>16;
-			INT32 gscrolly		= (RamVReg[gscroll]&0x000003ff)>>0;
-			
+			INT32 gscrollx = (RamVReg[gscroll] & 0x03ff0000) >> 16;
+			INT32 gscrolly = (RamVReg[gscroll] & 0x000003ff) >> 0;
+
 			start = (start * 0x100) >> 2;
 
-			if ((RamSpr[i+0]&0xf0000000) == 0x80000000) break;	
-		
-			for (INT32 j=0; j<length; j+=4) {
-				
-				UINT32 value1 = (RamSpr[start+j+0]);
-				UINT32 value2 = (RamSpr[start+j+1]);
-				UINT32 value3 = (RamSpr[start+j+2]);
-				UINT32 tileno = (value1&0xfffe0000)>>17;
+			if ((RamSpr[i + 0] & 0xf0000000) == 0x80000000)
+				break;
+
+			for (INT32 j = 0; j < length; j += 4)
+			{
+
+				UINT32 value1 = (RamSpr[start + j + 0]);
+				UINT32 value2 = (RamSpr[start + j + 1]);
+				UINT32 value3 = (RamSpr[start + j + 2]);
+				UINT32 tileno = (value1 & 0xfffe0000) >> 17;
 				INT32 count;
-				INT32 xpos2 = (value2 & 0x03ff0000)>>16;
-				INT32 ypos2 = (value2 & 0x000003ff)>>0;
-				INT32 flipx = (value1 & 0x00001000)>>12;
-				INT32 flipy = (value1 & 0x00000800)>>11;
-				INT32 alpha = (value1 & 0x00000400)>>10; //? this one is used for alpha effects on warzard
-				INT32 bpp =   (value1 & 0x00000200)>>9;
-				INT32 pal =   (value1 & 0x000001ff);
+				INT32 xpos2 = (value2 & 0x03ff0000) >> 16;
+				INT32 ypos2 = (value2 & 0x000003ff) >> 0;
+				INT32 flipx = (value1 & 0x00001000) >> 12;
+				INT32 flipy = (value1 & 0x00000800) >> 11;
+				INT32 alpha = (value1 & 0x00000400) >> 10; //? this one is used for alpha effects on warzard
+				INT32 bpp = (value1 & 0x00000200) >> 9;
+				INT32 pal = (value1 & 0x000001ff);
 
-				INT32 ysizedraw2 = ((value3 & 0x7f000000)>>24);
-				INT32 xsizedraw2 = ((value3 & 0x007f0000)>>16);
-				INT32 xx,yy;
+				INT32 ysizedraw2 = ((value3 & 0x7f000000) >> 24);
+				INT32 xsizedraw2 = ((value3 & 0x007f0000) >> 16);
+				INT32 xx, yy;
 
-				INT32 tilestable[4] = { 8,1,2,4 };
-				INT32 ysize2 = ((value3 & 0x0000000c)>>2);
-				INT32 xsize2 = ((value3 & 0x00000003)>>0);
-				UINT32 xinc,yinc;
+				INT32 tilestable[4] = {8, 1, 2, 4};
+				INT32 ysize2 = ((value3 & 0x0000000c) >> 2);
+				INT32 xsize2 = ((value3 & 0x00000003) >> 0);
+				UINT32 xinc, yinc;
 
-				if (ysize2==0)
-               continue;
+				if (ysize2 == 0)
+					continue;
 
-				if (xsize2==0)
+				if (xsize2 == 0)
 				{
 					if (nBurnLayer & 1)
 					{
-						INT32 tilemapnum = ((value3 & 0x00000030)>>4);
-						INT32 height     = (value3 & 0x7f000000)>>24;
-                  UINT32 *regs     = RamVReg + 8 + tilemapnum * 4;
-						INT32 endline    = value2;
-						INT32 startline  = endline - height;
+						INT32 tilemapnum = ((value3 & 0x00000030) >> 4);
+						INT32 height = (value3 & 0x7f000000) >> 24;
+						UINT32 *regs = RamVReg + 8 + tilemapnum * 4;
+						INT32 endline = value2;
+						INT32 startline = endline - height;
 
-						startline       &= 0x3ff;
-						endline         &= 0x3ff;
+						startline &= 0x3ff;
+						endline &= 0x3ff;
 
-						if (bg_drawn[tilemapnum]==0)
+						if (bg_drawn[tilemapnum] == 0)
 						{
 							UINT32 srcy = 0;
 							for (INT32 ry = 0; ry < 224; ry++, srcy += fsz)
-								cps3_draw_tilemapsprite_line( srcy >> 16, regs );
+								cps3_draw_tilemapsprite_line(srcy >> 16, regs);
 						}
 
 						bg_drawn[tilemapnum] = 1;
 					}
 				}
-            else
-            {
+				else
+				{
 					if (~nSpriteEnable & 1)
-                  continue;
+						continue;
 
 					ysize2 = tilestable[ysize2];
 					xsize2 = tilestable[xsize2];
 
-					xinc = ((xsizedraw2+1)<<16) / ((xsize2*0x10));
-					yinc = ((ysizedraw2+1)<<16) / ((ysize2*0x10));
+					xinc = ((xsizedraw2 + 1) << 16) / ((xsize2 * 0x10));
+					yinc = ((ysizedraw2 + 1) << 16) / ((ysize2 * 0x10));
 
-					xsize2-=1;
-					ysize2-=1;
+					xsize2 -= 1;
+					ysize2 -= 1;
 
 					flipx ^= global_xflip;
 					flipy ^= global_yflip;
 
 					if (!flipx)
-                  xpos2 += ((xsizedraw2+1)/2);
+						xpos2 += ((xsizedraw2 + 1) / 2);
 					else
-                  xpos2 -= ((xsizedraw2+1)/2);
+						xpos2 -= ((xsizedraw2 + 1) / 2);
 
-					ypos2+=((ysizedraw2+1)/2);
+					ypos2 += ((ysizedraw2 + 1) / 2);
 
-					if (!flipx) xpos2-= (((xsize2+1)*16*xinc)>>16);
-					else  xpos2+= (((xsize2)*16*xinc)>>16);
+					if (!flipx)
+						xpos2 -= (((xsize2 + 1) * 16 * xinc) >> 16);
+					else
+						xpos2 += (((xsize2) * 16 * xinc) >> 16);
 
-					if (flipy) ypos2-= ((ysize2*16*yinc)>>16);
+					if (flipy)
+						ypos2 -= ((ysize2 * 16 * yinc) >> 16);
 
 					{
 						count = 0;
-						for (xx=0;xx<xsize2+1;xx++)
-                  {
-                     INT32 current_xpos;
+						for (xx = 0; xx < xsize2 + 1; xx++)
+						{
+							INT32 current_xpos;
 
-                     if (!flipx)
-                        current_xpos = (xpos+xpos2+((xx*16*xinc)>>16)  );
-                     else
-                        current_xpos = (xpos+xpos2-((xx*16*xinc)>>16));
+							if (!flipx)
+								current_xpos = (xpos + xpos2 + ((xx * 16 * xinc) >> 16));
+							else
+								current_xpos = (xpos + xpos2 - ((xx * 16 * xinc) >> 16));
 
-                     current_xpos += gscrollx;
-                     current_xpos += 1;
-                     current_xpos &=0x3ff;
-                     if (current_xpos&0x200) current_xpos-=0x400;
+							current_xpos += gscrollx;
+							current_xpos += 1;
+							current_xpos &= 0x3ff;
+							if (current_xpos & 0x200)
+								current_xpos -= 0x400;
 
-                     for (yy=0;yy<ysize2+1;yy++)
-                     {
-                        INT32 current_ypos;
-                        INT32 actualpal;
+							for (yy = 0; yy < ysize2 + 1; yy++)
+							{
+								INT32 current_ypos;
+								INT32 actualpal;
 
-                        if (flipy) current_ypos = (ypos+ypos2+((yy*16*yinc)>>16));
-                        else current_ypos = (ypos+ypos2-((yy*16*yinc)>>16));
+								if (flipy)
+									current_ypos = (ypos + ypos2 + ((yy * 16 * yinc) >> 16));
+								else
+									current_ypos = (ypos + ypos2 - ((yy * 16 * yinc) >> 16));
 
-                        current_ypos += gscrolly;
-                        current_ypos = 0x3ff-current_ypos;
-                        current_ypos -= 17;
-                        current_ypos &=0x3ff;
+								current_ypos += gscrolly;
+								current_ypos = 0x3ff - current_ypos;
+								current_ypos -= 17;
+								current_ypos &= 0x3ff;
 
-                        if (current_ypos&0x200) current_ypos-=0x400;
+								if (current_ypos & 0x200)
+									current_ypos -= 0x400;
 
-                        /* use the palette value from the main list or the sublists? */
-                        if (whichpal) actualpal = global_pal;
-                        else actualpal = pal;
+								/* use the palette value from the main list or the sublists? */
+								if (whichpal)
+									actualpal = global_pal;
+								else
+									actualpal = pal;
 
-                        /* use the bpp value from the main list or the sublists? */
-                        INT32 color_granularity;
-                        if (whichbpp) {
-                           if (!global_bpp) color_granularity = 8;
-                           else color_granularity = 6;
-                        } else {
-                           if (!bpp) color_granularity = 8;
-                           else color_granularity = 6;
-                        }
-                        actualpal <<= color_granularity;
+								/* use the bpp value from the main list or the sublists? */
+								INT32 color_granularity;
+								if (whichbpp)
+								{
+									if (!global_bpp)
+										color_granularity = 8;
+									else
+										color_granularity = 6;
+								}
+								else
+								{
+									if (!bpp)
+										color_granularity = 8;
+									else
+										color_granularity = 6;
+								}
+								actualpal <<= color_granularity;
 
-                        {
-                           INT32 realtileno = tileno+count;
+								{
+									INT32 realtileno = tileno + count;
 
-                           if ( realtileno ) {
-                              if (global_alpha || alpha) {
-                                 // fix jojo's title in it's intro ???
-                                 if ( global_alpha && (global_pal & 0x100))
-                                    actualpal &= 0x0ffff;
+									if (realtileno)
+									{
+										if (global_alpha || alpha)
+										{
+											// fix jojo's title in it's intro ???
+											if (global_alpha && (global_pal & 0x100))
+												actualpal &= 0x0ffff;
 
-                                 cps3_drawgfxzoom_2(realtileno,actualpal,flipx,flipy,current_xpos,current_ypos,xinc,yinc, color_granularity);
-
-                              } else {
-                                 cps3_drawgfxzoom_2(realtileno,actualpal,flipx,flipy,current_xpos,current_ypos,xinc,yinc, 0);
-                              }
-                           }
-                           count++;
-                        }
-                     }
-                  }
+											cps3_drawgfxzoom_2(realtileno, actualpal, flipx, flipy, current_xpos, current_ypos, xinc, yinc, color_granularity);
+										}
+										else
+										{
+											cps3_drawgfxzoom_2(realtileno, actualpal, flipx, flipy, current_xpos, current_ypos, xinc, yinc, 0);
+										}
+									}
+									count++;
+								}
+							}
+						}
 					}
 				}
 			}
 		}
 	}
-	
+
 	{
 		UINT32 srcx, srcy = 0;
-		UINT32 * srcbitmap;
-		UINT16 * dstbitmap = (UINT16 * )pBurnDraw;
+		UINT32 *srcbitmap;
+		UINT16 *dstbitmap = (UINT16 *)pBurnDraw;
 
-		for (INT32 rendery=0; rendery<224; rendery++)
-      {
-         srcbitmap = RamScreen + (srcy >> 16) * 1024;
-         srcx=0;
-         for (INT32 renderx=0; renderx<cps3_gfx_width; renderx++, dstbitmap ++) {
-            *dstbitmap = Cps3CurPal[ srcbitmap[srcx>>16] ];
-            srcx += fsz;
-         }
-         srcy += fsz;
-      }
+		for (INT32 rendery = 0; rendery < 224; rendery++)
+		{
+			srcbitmap = RamScreen + (srcy >> 16) * 1024;
+			srcx = 0;
+			for (INT32 renderx = 0; renderx < cps3_gfx_width; renderx++, dstbitmap++)
+			{
+				*dstbitmap = Cps3CurPal[srcbitmap[srcx >> 16]];
+				srcx += fsz;
+			}
+			srcy += fsz;
+		}
 	}
-	
+
 	if (nBurnLayer & 2)
 	{
 		// bank select? (sfiii2 intro)
 		INT32 count = (ss_bank_base & 0x01000000) ? 0x0000 : 0x0800;
-		for (INT32 y=0; y<32-4; y++)
-      {
-			for (INT32 x=0; x<64; x++, count++)
-         {
-            UINT32 data  = RamSS[count]; // +0x800 = 2nd bank, used on sfiii2 intro..
-            UINT32 tile  = (data >> 16) & 0x1ff;
-            INT32 pal    = (data & 0x003f) >> 1;
-            INT32 flipx  = data & 0x0080;
-            INT32 flipy  = data & 0x0040;
-            pal         += ss_pal_base << 5;
+		for (INT32 y = 0; y < 32 - 4; y++)
+		{
+			for (INT32 x = 0; x < 64; x++, count++)
+			{
+				UINT32 data = RamSS[count]; // +0x800 = 2nd bank, used on sfiii2 intro..
+				UINT32 tile = (data >> 16) & 0x1ff;
+				INT32 pal = (data & 0x003f) >> 1;
+				INT32 flipx = data & 0x0080;
+				INT32 flipy = data & 0x0040;
+				pal += ss_pal_base << 5;
 
-            if (tile == 0)
-               continue; // ok?
+				if (tile == 0)
+					continue; // ok?
 
-            tile        += 0x200;
-            cps3_drawgfxzoom_0(tile,pal,flipx,flipy,x*8,y*8);
-         }
+				tile += 0x200;
+				cps3_drawgfxzoom_0(tile, pal, flipx, flipy, x * 8, y * 8);
+			}
 		}
 	}
 }
@@ -2187,36 +2472,37 @@ INT32 cps3Frame(void)
 
 	if (cps3_reset)
 		Cps3Reset();
-		
+
 	if (cps3_palette_change)
 	{
-		for(INT32 i=0;i<0x0020000;i++)
+		for (INT32 i = 0; i < 0x0020000; i++)
 		{
 #ifdef MSB_FIRST
 			INT32 data = RamPal[i];
 #else
 			INT32 data = RamPal[i ^ 1];
 #endif
-			INT32 r = (data & 0x001F) << 3;	// Red
-			INT32 g = (data & 0x03E0) >> 2;	// Green
-			INT32 b = (data & 0x7C00) >> 7;	// Blue
+			INT32 r = (data & 0x001F) << 3; // Red
+			INT32 g = (data & 0x03E0) >> 2; // Green
+			INT32 b = (data & 0x7C00) >> 7; // Blue
 			r |= r >> 5;
 			g |= g >> 5;
 			b |= b >> 5;
-			Cps3CurPal[i] = BurnHighCol(r, g, b, 0);	
+			Cps3CurPal[i] = BurnHighCol(r, g, b, 0);
 		}
 		cps3_palette_change = 0;
 	}
-	
-	if (WideScreenFrameDelay == GetCurrentFrame()) {
+
+	if (WideScreenFrameDelay == GetCurrentFrame())
+	{
 		BurnDrvGetVisibleSize(&cps3_gfx_width, &cps3_gfx_height);
 		WideScreenFrameDelay = 0;
 	}
-	
+
 	Cps3Input[0] = 0;
 	Cps3Input[1] = 0;
 	Cps3Input[3] = 0;
-	for (INT32 i=0; i<16; i++)
+	for (INT32 i = 0; i < 16; i++)
 	{
 		Cps3Input[0] |= (Cps3But1[i] & 1) << i;
 		Cps3Input[1] |= (Cps3But2[i] & 1) << i;
@@ -2231,17 +2517,17 @@ INT32 cps3Frame(void)
 	cpu_start = GET_TIME_US();
 #endif
 
-	for (INT32 i=0; i<4; i++)
+	for (INT32 i = 0; i < 4; i++)
 	{
 		Sh2Run(6250000 * 4 / 60 / 4);
-		
+
 		if (cps_int10_cnt >= 2)
-      {
+		{
 			cps_int10_cnt = 0;
 			Sh2SetIRQLine(10, SH2_IRQSTATUS_AUTO);
 		}
-      else
-         cps_int10_cnt++;
+		else
+			cps_int10_cnt++;
 	}
 	Sh2SetIRQLine(12, SH2_IRQSTATUS_AUTO);
 
@@ -2251,118 +2537,119 @@ INT32 cps3Frame(void)
 #endif
 
 	cps3SndUpdate();
-	
+
 #if CPS3_PERF_OVERLAY
 	draw_start = GET_TIME_US();
 #endif
 
-	if (pBurnDraw) DrvDraw();
+	if (pBurnDraw)
+		DrvDraw();
 
 #if CPS3_PERF_OVERLAY
 	draw_end = GET_TIME_US();
 	perf_draw_time_us = draw_end - draw_start;
-	
+
 	// Calculate total frame time
 	perf_frame_time_us = GET_TIME_US() - frame_start;
-	
+
 	// Moving averages (87.5% old + 12.5% new) for smoother display
 	perf_avg_cpu_us = (perf_avg_cpu_us * 7 + perf_cpu_time_us) / 8;
 	perf_avg_draw_us = (perf_avg_draw_us * 7 + perf_draw_time_us) / 8;
 	perf_avg_frame_us = (perf_avg_frame_us * 7 + perf_frame_time_us) / 8;
 	perf_frame_count++;
-	
+
 	// Draw overlay on top of the frame
-	if (pBurnDraw) draw_perf_overlay();
+	if (pBurnDraw)
+		draw_perf_overlay();
 #endif
 
 	return 0;
 }
-
 
 INT32 cps3Scan(INT32 nAction, INT32 *pnMin)
 {
 	struct BurnArea ba;
 
 	if (pnMin)
-      *pnMin =  0x029672;
-	
+		*pnMin = 0x029672;
+
 	if (nAction & ACB_NVRAM)
-   {
+	{
 		// Save EEPROM configuration
-		ba.Data		= EEPROM;
-		ba.nLen		= 0x0000400;
+		ba.Data = EEPROM;
+		ba.nLen = 0x0000400;
 		ba.nAddress = 0;
-		ba.szName	= "EEPROM RAM";
+		ba.szName = "EEPROM RAM";
 		BurnAcb(&ba);
 	}
-	
+
 	if (nAction & ACB_MEMORY_RAM)
-   {
-		ba.Data		= RamMain;
-		ba.nLen		= 0x0080000;
+	{
+		ba.Data = RamMain;
+		ba.nLen = 0x0080000;
 		ba.nAddress = 0;
-		ba.szName	= "Main RAM";
+		ba.szName = "Main RAM";
 		BurnAcb(&ba);
 
-		ba.Data		= RamSpr;
-		ba.nLen		= 0x0080000;
+		ba.Data = RamSpr;
+		ba.nLen = 0x0080000;
 		ba.nAddress = 0;
-		ba.szName	= "Sprite RAM";
+		ba.szName = "Sprite RAM";
 		BurnAcb(&ba);
 
-		ba.Data		= RamSS;
-		ba.nLen		= 0x0010000;
+		ba.Data = RamSS;
+		ba.nLen = 0x0010000;
 		ba.nAddress = 0;
-		ba.szName	= "Char ROM";
-		BurnAcb(&ba);
-		
-		ba.Data		= RamVReg;
-		ba.nLen		= 0x0000100;
-		ba.nAddress = 0;
-		ba.szName	= "Video REG";
-		BurnAcb(&ba);
-		
-		ba.Data		= RamC000;
-		ba.nLen		= 0x0000400 * 2;
-		ba.nAddress = 0;
-		ba.szName	= "RAM C000";
-		BurnAcb(&ba);				
-		
-		ba.Data		= RamPal;
-		ba.nLen		= 0x0040000;
-		ba.nAddress = 0;
-		ba.szName	= "Palette";
+		ba.szName = "Char ROM";
 		BurnAcb(&ba);
 
-		ba.Data		= RamCRam;
-		ba.nLen		= 0x0800000;
+		ba.Data = RamVReg;
+		ba.nLen = 0x0000100;
 		ba.nAddress = 0;
-		ba.szName	= "Sprite ROM";
+		ba.szName = "Video REG";
 		BurnAcb(&ba);
 
-/*		// so huge. need not backup it while NOCD
-		// otherwize, need backup gfx also
-		ba.Data		= RomGame;
-		ba.nLen		= 0x1000000;
+		ba.Data = RamC000;
+		ba.nLen = 0x0000400 * 2;
 		ba.nAddress = 0;
-		ba.szName	= "Game ROM";
+		ba.szName = "RAM C000";
 		BurnAcb(&ba);
-*/
+
+		ba.Data = RamPal;
+		ba.nLen = 0x0040000;
+		ba.nAddress = 0;
+		ba.szName = "Palette";
+		BurnAcb(&ba);
+
+		ba.Data = RamCRam;
+		ba.nLen = 0x0800000;
+		ba.nAddress = 0;
+		ba.szName = "Sprite ROM";
+		BurnAcb(&ba);
+
+		/*		// so huge. need not backup it while NOCD
+				// otherwize, need backup gfx also
+				ba.Data		= RomGame;
+				ba.nLen		= 0x1000000;
+				ba.nAddress = 0;
+				ba.szName	= "Game ROM";
+				BurnAcb(&ba);
+		*/
 	}
-	
+
 	if (nAction & ACB_DRIVER_DATA)
-   {
+	{
 		Sh2Scan(nAction);
 		cps3SndScan(nAction);
-		
+
 		SCAN_VAR(Cps3Input);
-		
+
 		SCAN_VAR(ss_bank_base);
 		SCAN_VAR(ss_pal_base);
 		SCAN_VAR(cram_bank);
 		SCAN_VAR(cps3_current_eeprom_read);
 		SCAN_VAR(gfxflash_bank);
-		
+
 		SCAN_VAR(paldma_source);
 		SCAN_VAR(paldma_dest);
 		SCAN_VAR(paldma_fade);
@@ -2370,24 +2657,24 @@ INT32 cps3Scan(INT32 nAction, INT32 *pnMin)
 
 		SCAN_VAR(chardma_source);
 		SCAN_VAR(chardma_table_address);
-		
-		//SCAN_VAR(main_flash);
-		
-		//SCAN_VAR(last_normal_byte);
-		//SCAN_VAR(lastb);
-		//SCAN_VAR(lastb2);
-		
+
+		// SCAN_VAR(main_flash);
+
+		// SCAN_VAR(last_normal_byte);
+		// SCAN_VAR(lastb);
+		// SCAN_VAR(lastb2);
+
 		SCAN_VAR(cps_int10_cnt);
-				
+
 		if (nAction & ACB_WRITE)
-      {
+		{
 			// rebuild current palette
 			cps3_palette_change = 1;
-			
+
 			// remap RamCRam
 			Sh2MapMemory(((UINT8 *)RamCRam) + (cram_bank << 20), 0x04100000, 0x041fffff, SH2_RAM);
 		}
 	}
-	
+
 	return 0;
 }

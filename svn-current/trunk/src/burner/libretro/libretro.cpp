@@ -8,6 +8,11 @@
 
 #define CORE_OPTION_NAME "fbalpha2012_cps3"
 
+// Vita: Request RWX memory for SH2 JIT
+#ifdef VITA
+unsigned int _newlib_vm_size_user = 4 * 1024 * 1024; // 4MB for DRC
+#endif
+
 #ifdef WII_VM
 #include <unistd.h> // sleep
 #include <dirent.h>

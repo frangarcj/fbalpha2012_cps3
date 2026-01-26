@@ -1,4 +1,4 @@
-DEBUG = 0
+DEBUG = 1
 LIBRETRO_OPTIMIZATIONS = 1
 FRONTEND_SUPPORTS_RGB565 = 1
 HAVE_GRIFFIN = 0
@@ -169,11 +169,12 @@ else ifeq ($(platform), vita)
 	CC_AS = arm-vita-eabi-gcc$(EXE_EXT)
 	CXX = arm-vita-eabi-g++$(EXE_EXT)
 	AR = arm-vita-eabi-ar$(EXE_EXT)
-   PLATFORM_DEFINES += -DVITA
+   PLATFORM_DEFINES += -DVITA -DDRC_SH2
    CFLAGS += -fno-optimize-sibling-calls -mcpu=cortex-a9 -mfpu=neon-fp16 -mfloat-abi=hard -ffast-math -fomit-frame-pointer
    CXXFLAGS += -fno-optimize-sibling-calls -mcpu=cortex-a9 -mfpu=neon-fp16 -mfloat-abi=hard -ffast-math -fomit-frame-pointer
    EXTERNAL_ZLIB = 1
 	STATIC_LINKING = 1
+   USE_DRC_SH2 = 1
 
 # Classic Platforms ####################
 # Platform affix = classic_<ISA>_<µARCH>
@@ -339,6 +340,10 @@ FBA_BURN_DIRS := $(FBA_BURN_DIR) \
 
 FBA_CPU_DIRS := $(FBA_CPU_DIR) $(FBA_CPU_DIR)/sh2
 
+ifeq ($(USE_DRC_SH2), 1)
+   FBA_CPU_DIRS += $(FBA_CPU_DIR)/sh2/drc
+endif
+
 FBA_LIB_DIRS := $(FBA_LIB_DIR)/zlib
 
 FBA_SRC_DIRS := $(FBA_BURNER_DIR) $(FBA_BURN_DIRS) $(FBA_CPU_DIRS) $(FBA_BURNER_DIRS)
@@ -445,6 +450,16 @@ endif
 PERL = perl$(EXE_EXT)
 EXE_PREFIX = ./
 
+ifeq ($(platform), vita)
+   FBA_DEFINES += -DDRC_SH2
+   INCFLAGS += -I$(FBA_CPU_DIR)/sh2/drc
+   VITA_DRC_SRCS := $(filter-out %emit_arm.c, $(wildcard $(FBA_CPU_DIR)/sh2/drc/*.c))
+   VITA_DRC_SRCS += $(FBA_CPU_DIR)/sh2/drc/mame/sh2dasm.c
+   OBJS += $(VITA_DRC_SRCS:.c=.o)
+   # Force ARM mode for DRC files (JIT generates ARM code, needs ARM-mode C functions)
+   DRC_ARM_FLAGS := -marm
+endif
+
 .PHONY: clean generate-files generate-files-clean clean-objs
 
 ifeq ($(platform), theos_ios)
@@ -466,6 +481,15 @@ generate-files:
 	@echo ""
 	$(PERL) $(FBA_SCRIPTS_DIR)/gamelist.pl -o $(FBA_GENERATED_DIR)/driverlist.h -l gamelist.txt $(FBA_BURN_DRIVERS_DIR)/cps3
 	(PERL) $(FBA_SCRIPTS_DIR)/gamelist.pl -o $(FBA_GENERATED_DIR)/driverlist-gx.h -l gamelist-gx.txt $(FBA_BURN_DRIVERS_DIR)/cps3
+
+# Vita: DRC files need ARM mode (JIT generates ARM code) - MUST be before generic rules
+ifeq ($(platform), vita)
+$(FBA_CPU_DIR)/sh2/drc/%.o: $(FBA_CPU_DIR)/sh2/drc/%.c
+	$(CC) -c -o $@ $< $(CFLAGS) $(DRC_ARM_FLAGS) $(INCFLAGS)
+
+$(FBA_CPU_DIR)/sh2/sh2.o: $(FBA_CPU_DIR)/sh2/sh2.cpp
+	$(CXX) -c -o $@ $< $(CXXFLAGS) $(DRC_ARM_FLAGS) $(INCFLAGS)
+endif
 
 %.o: %.cpp
 	@$(CXX) -c -o $@ $< $(CXXFLAGS) $(INCFLAGS)
