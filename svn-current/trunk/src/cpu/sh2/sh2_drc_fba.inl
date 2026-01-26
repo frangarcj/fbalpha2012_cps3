@@ -277,7 +277,7 @@ extern "C"
             // because FBA memory for CPS3 is already word-swapped for 16-bit access,
             // which effectively makes 32-bit reads correct Big Endian on Little Endian hosts.
             unsigned int val = *((unsigned int *)(pr + (a & SH2_PAGEM)));
-            
+
             static int r32_log = 0;
             if (r32_log++ < 20 && a >= 0x06000000 && a < 0x06000200)
             {
@@ -291,7 +291,7 @@ extern "C"
             // We MUST un-swap it to get the correct native value.
             typedef unsigned int (*ReadLongHandler)(unsigned int);
             unsigned int val = ((ReadLongHandler)pSh2Ext->ReadLong[(uintptr_t)pr])(a);
-            
+
 #ifdef VITA
             // Undo FBA's half-swap to get correct Big Endian value
             if ((uintptr_t)pr == 2)
@@ -348,20 +348,20 @@ extern "C"
         }
 
         unsigned char *pr = pSh2Ext->MemMap[(a >> SH2_SHIFT) + SH2_WADD];
-        
+
         // Force handler for Palette RAM (0x0408xxxx) to trigger update logic
         if (a >= 0x04080000 && a < 0x040c0000)
         {
 #ifdef VITA
-             // FBA handers expect swapped bytes on Little Endian hosts
-             d = (d << 8) | (d >> 8);
+            // FBA handers expect swapped bytes on Little Endian hosts
+            d = (d << 8) | (d >> 8);
 #endif
-             // HW Palette Handler is index 4 in cps3run.cpp
-             if (pSh2Ext->WriteWord[4])
-                 pSh2Ext->WriteWord[4](a, d);
-             else
-                 printf("SH2DRC: ERROR - Palette Handler 4 missing!\n");
-             return;
+            // HW Palette Handler is index 4 in cps3run.cpp
+            if (pSh2Ext->WriteWord[4])
+                pSh2Ext->WriteWord[4](a, d);
+            else
+                printf("SH2DRC: ERROR - Palette Handler 4 missing!\n");
+            return;
         }
 
         if ((uintptr_t)pr >= SH2_MAXHANDLER)
@@ -495,7 +495,7 @@ extern "C"
             static int poll_log = 0;
             if (poll_log++ < 20)
                 printf("SH2DRC: Poll detect at PC=%08x (cnt=%d) - Yielding\n", sh2->pc, maxcnt);
-            
+
             // Abort current timeslice
             sh2->cycles_timeslice = 0;
         }
@@ -506,12 +506,12 @@ extern "C"
         // Check if an interrupt is pending that should break the poll
         if (sh2->pending_level >= 0)
         {
-             static int poll_ev_log = 0;
-             if (poll_ev_log++ < 20)
-                 printf("SH2DRC: Poll event at PC=%08x - IRQ pending %d\n", sh2->pc, sh2->pending_level);
-             
-             // Abort to process IRQ
-             sh2->cycles_timeslice = 0;
+            static int poll_ev_log = 0;
+            if (poll_ev_log++ < 20)
+                printf("SH2DRC: Poll event at PC=%08x - IRQ pending %d\n", sh2->pc, sh2->pending_level);
+
+            // Abort to process IRQ
+            sh2->cycles_timeslice = 0;
         }
     }
 
@@ -739,6 +739,13 @@ INT32 Sh2RunDrc(INT32 cycles)
     sh2_drc_ctx.mach = sh2->mach;
     sh2_drc_ctx.macl = sh2->macl;
 
+    // Internal regs (m[] -> peri_regs, assuming peri_regs[0..63] maps to m[0..63])
+    memcpy(sh2_drc_ctx.peri_regs, sh2->m, 64 * 4);
+
+    // Timers and DMAC state (if DRC needs them directly)
+    // Note: DRC may not use these directly, but sync for consistency
+    // Add more if needed, e.g., sh2_drc_ctx.frc = sh2->frc; if field exists
+
     // DEBUG: Dump RAM on first run to verify code
     static bool ram_dumped = false;
     if (!ram_dumped && sh2_drc_ctx.pc == 0x06000ea0) // Wait for start PC
@@ -765,30 +772,8 @@ INT32 Sh2RunDrc(INT32 cycles)
 
     // The DRC expects 'cycles_timeslice' to be set
     int cycles_to_run = cycles;
-    // Debug: force tiny timeslice in target ranges to capture execution trace
-    static int trace_left = 0;
-    static int trace_mode = 0;
-    if (sh2_drc_ctx.pc >= 0x06000800 && sh2_drc_ctx.pc <= 0x06000a00)
-    {
-        if (trace_mode != 1)
-        {
-            trace_mode = 1;
-            trace_left = 2000;
-            printf("SH2DRC: TRACE mode=060008xx enabled\n");
-        }
-    }
-    else if (sh2_drc_ctx.pc >= 0x06000ea0 && sh2_drc_ctx.pc <= 0x06001000)
-    {
-        if (trace_mode != 2)
-        {
-            trace_mode = 2;
-            trace_left = 2000;
-            printf("SH2DRC: TRACE mode=06000exx enabled\n");
-        }
-    }
 
     sh2_drc_ctx.cycles_timeslice = cycles_to_run;
-
 
     // Sync interrupts: Convert FBA's pending_irq bitmask to level (include internal IRQs)
 
@@ -806,13 +791,13 @@ INT32 Sh2RunDrc(INT32 cycles)
     }
     if (sh2->internal_irq_level > level)
         level = sh2->internal_irq_level;
-    
+
     // Log IRQ transitions to debug synchronization issues
     if (sh2_drc_ctx.pending_level != level)
     {
         static int irq_trans_log = 0;
         if (irq_trans_log++ < 100)
-            printf("SH2DRC: IRQ level transition: %d -> %d (pending_irq=0x%04x internal=%d)\n", 
+            printf("SH2DRC: IRQ level transition: %d -> %d (pending_irq=0x%04x internal=%d)\n",
                    sh2_drc_ctx.pending_level, level, sh2->pending_irq, sh2->internal_irq_level);
     }
 
@@ -831,43 +816,8 @@ INT32 Sh2RunDrc(INT32 cycles)
     // Execute
     sh2_drc_record_trace(&sh2_drc_ctx);
 
-    static u32 last_pc = 0;
-    static int trace_dumped_060008 = 0;
-    static int trace_dumped_06000cdx = 0;
-    static int trace_dumped_06000840 = 0;
-
     int cycles_remaining = 0;
-#if 0
-    int total_executed = 0;
-    while (total_executed < cycles_to_run)
-    {
-        sh2_drc_ctx.cycles_timeslice = 1;
-        int rem = sh2_execute_drc(&sh2_drc_ctx, 1);
-        int executed = 1 - rem;
-        if (executed <= 0)
-            executed = 1;
-        total_executed += executed;
-        last_pc = sh2_drc_ctx.pc;
-
-        static int drc_step_count = 0;
-        if (DRC_STEP_MAX <= 0 || drc_step_count < DRC_STEP_MAX)
-        {
-            sh2_drc_log_step(&sh2_drc_ctx);
-            drc_step_count++;
-        }
-    }
-    cycles_remaining = cycles_to_run - total_executed;
-#else
     cycles_remaining = sh2_execute_drc(&sh2_drc_ctx, cycles_to_run);
-    last_pc = sh2_drc_ctx.pc;
-#endif
-
-    if (sh2_drc_ctx.pc == 0)
-    {
-        printf("SH2DRC: ERROR - ctx PC became 0 (last PC=%08x)\n", last_pc);
-        sh2_drc_dump_trace("pc=0 after execute");
-        abort();
-    }
 
     // Debug: dump if PC looks corrupt
     if (sh2_drc_ctx.pc >= 0xF0000000 || sh2_drc_ctx.pc == 0)
@@ -890,6 +840,23 @@ INT32 Sh2RunDrc(INT32 cycles)
     sh2->vbr = sh2_drc_ctx.vbr;
     sh2->mach = sh2_drc_ctx.mach;
     sh2->macl = sh2_drc_ctx.macl;
+
+    // Internal regs (peri_regs -> m[])
+    memcpy(sh2->m, sh2_drc_ctx.peri_regs, 64 * 4);
+
+    // Update total cycles (like interpreter)
+    sh2->sh2_total_cycles += cycles - cycles_remaining;
+
+    // Check timers and DMA (like interpreter does after each opcode)
+    {
+        unsigned int cy = sh2->sh2_total_cycles;
+        if (sh2->dma_timer_active[0] && (cy - sh2->dma_timer_base[0]) >= sh2->dma_timer_cycles[0])
+            sh2_dmac_callback(0);
+        if (sh2->dma_timer_active[1] && (cy - sh2->dma_timer_base[1]) >= sh2->dma_timer_cycles[1])
+            sh2_dmac_callback(1);
+        if (sh2->timer_active && (cy - sh2->timer_base) >= sh2->timer_cycles)
+            sh2_timer_callback();
+    }
 
     return cycles - cycles_remaining; // Cycles executed
 }
