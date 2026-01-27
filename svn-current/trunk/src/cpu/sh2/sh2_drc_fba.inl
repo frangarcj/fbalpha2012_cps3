@@ -2,8 +2,8 @@
 
 #ifdef VITA
 // DRC_STEP logging for compare_traces.py
-#define DRC_STEP_LOG 1
-#define DRC_STEP_MAX 5000000
+#define DRC_STEP_LOG 0
+#define DRC_STEP_MAX 10000000
 
 // Vita includes for RWX memory
 #include <psp2/kernel/sysmem.h>
@@ -30,13 +30,11 @@ static int sceBlock = 0;
 #if DRC_STEP_LOG
 static void sh2_drc_log_step(const SH2_DRC *ctx)
 {
-    printf("DRC_STEP PC:%08x SR:%08x R0:%08x R1:%08x R2:%08x R3:%08x R4:%08x R5:%08x R6:%08x R7:%08x R8:%08x R9:%08x R10:%08x R11:%08x R12:%08x R13:%08x R14:%08x R15:%08x PR:%08x MACH:%08x MACL:%08x GBR:%08x VBR:%08x\n",
-           ctx->pc, ctx->sr,
+    printf("REF %08x: R0:%08x R1:%08x R2:%08x R3:%08x R4:%08x R5:%08x R13:%08x R14:%08x R15:%08x SR:%08x PR:%08x MACH:%08x MACL:%08x GBR:%08x VBR:%08x\n",
+           ctx->pc,
            ctx->r[0], ctx->r[1], ctx->r[2], ctx->r[3],
-           ctx->r[4], ctx->r[5], ctx->r[6], ctx->r[7],
-           ctx->r[8], ctx->r[9], ctx->r[10], ctx->r[11],
-           ctx->r[12], ctx->r[13], ctx->r[14], ctx->r[15],
-           ctx->pr, ctx->mach, ctx->macl, ctx->gbr, ctx->vbr);
+           ctx->r[4], ctx->r[5], ctx->r[13], ctx->r[14], ctx->r[15],
+           ctx->sr, ctx->pr, ctx->mach, ctx->macl, ctx->gbr, ctx->vbr);
 }
 #endif
 
@@ -53,9 +51,6 @@ extern "C" u32 REGPARM(2) p32x_sh2_read16(u32 a, SH2_DRC *sh2);
 // Opcode fetch uses FETCH map, not READ map
 u32 REGPARM(2) p32x_sh2_fetch16(u32 a, SH2_DRC *sh2)
 {
-    if (!pSh2Ext)
-        return 0xFFFF;
-
     unsigned char *pr = pSh2Ext->MemMap[(a >> SH2_SHIFT) + SH2_WADD * 2];
     if ((uintptr_t)pr >= SH2_MAXHANDLER)
     {
@@ -64,19 +59,7 @@ u32 REGPARM(2) p32x_sh2_fetch16(u32 a, SH2_DRC *sh2)
 #endif
         return *((unsigned short *)(pr + (a & SH2_PAGEM)));
     }
-    if ((uintptr_t)pr < SH2_MAXHANDLER && pSh2Ext->ReadWord[(uintptr_t)pr])
-    {
-        unsigned short v = pSh2Ext->ReadWord[(uintptr_t)pr](a);
-#ifdef VITA
-        // FBA handlers on Little Endian hosts return byte-swapped values (1234 -> 3412)
-        // We MUST un-swap to get correct native value
-        if ((uintptr_t)pr == 2)
-            v = (v << 8) | (v >> 8);
-#endif
-        return v;
-    }
-
-    return 0xFFFF;
+    return pSh2Ext->ReadWord[(uintptr_t)pr](a);
 }
 
 // Last-op trace ring buffer (for debugging PC=0 issues)
@@ -184,14 +167,6 @@ extern "C"
     // Read handlers - use pSh2Ext->MemMap for reads with validation
     u32 REGPARM(2) p32x_sh2_read8(u32 a, SH2_DRC *sh2)
     {
-        // Debug first few calls
-        static int r8_count = 0;
-        if (r8_count++ < 5)
-            printf("SH2DRC: Read8 a=%08x pSh2Ext=%p\n", a, (void *)pSh2Ext);
-
-        if (!pSh2Ext)
-            return 0xFFFFFFFF; // Sign-extended
-
         unsigned char *pr = pSh2Ext->MemMap[(a >> SH2_SHIFT)];
         if ((uintptr_t)pr >= SH2_MAXHANDLER)
         {
@@ -203,21 +178,12 @@ extern "C"
             return (int)(signed char)(*((unsigned char *)(pr + (a & SH2_PAGEM))));
 #endif
         }
-        // Handler mode
-        if ((uintptr_t)pr < SH2_MAXHANDLER && pSh2Ext->ReadByte[(uintptr_t)pr])
-        {
-            return (int)(signed char)(pSh2Ext->ReadByte[(uintptr_t)pr](a));
-        }
-        printf("SH2DRC: Read8 unmapped %08x\n", a);
-        return 0xFFFFFFFF; // Sign-extended 0xFF
+        return (int)(signed char)(pSh2Ext->ReadByte[(uintptr_t)pr](a));
     }
+
 
     u32 REGPARM(2) p32x_sh2_read16(u32 a, SH2_DRC *sh2)
     {
-        if (!pSh2Ext)
-            return 0xFFFFFFFF; // Sign-extended
-
-        int trace_060008 = (sh2 && sh2->pc >= 0x06000840 && sh2->pc <= 0x06000900 && a >= 0x06000900);
 
         unsigned char *pr = pSh2Ext->MemMap[(a >> SH2_SHIFT)];
         if ((uintptr_t)pr >= SH2_MAXHANDLER)
@@ -227,85 +193,25 @@ extern "C"
             // On little-endian host (Vita), apply same XOR as CPS3 handlers
             u32 addr_swapped = a ^ 0x02;
             unsigned short v = *((unsigned short *)(pr + (addr_swapped & SH2_PAGEM)));
-            if (trace_060008)
-            {
-                static int r16_trace = 0;
-                if (r16_trace++ < 200)
-                    printf("SH2DRC: R16 PC=%08x A=%08x D=%04x\n", sh2->pc, a, v);
-            }
             return (int)(signed short)v;
 #else
             unsigned short v = *((unsigned short *)(pr + (a & SH2_PAGEM)));
-            if (trace_060008)
-            {
-                static int r16_trace = 0;
-                if (r16_trace++ < 200)
-                    printf("SH2DRC: R16 PC=%08x A=%08x D=%04x\n", sh2->pc, a, v);
-            }
             return (int)(signed short)v;
 #endif
         }
-        if ((uintptr_t)pr < SH2_MAXHANDLER && pSh2Ext->ReadWord[(uintptr_t)pr])
-        {
-            unsigned short v = pSh2Ext->ReadWord[(uintptr_t)pr](a);
-#ifdef VITA
-            // FBA handlers on Little Endian hosts return byte-swapped values (1234 -> 3412)
-            // We MUST un-swap to get correct native value
-            if ((uintptr_t)pr == 2)
-                v = (v << 8) | (v >> 8);
-#endif
-            if (trace_060008)
-            {
-                static int r16_trace = 0;
-                if (r16_trace++ < 200)
-                    printf("SH2DRC: R16 PC=%08x A=%08x D=%04x\n", sh2->pc, a, v);
-            }
-            return (int)(signed short)v;
-        }
-        return 0xFFFFFFFF; // Sign-extended 0xFFFF
+        return pSh2Ext->ReadWord[(uintptr_t)pr](a);
     }
 
     u32 REGPARM(2) p32x_sh2_read32(u32 a, SH2_DRC *sh2)
     {
-        if (!pSh2Ext)
-            return 0xFFFFFFFF;
 
         unsigned char *pr = pSh2Ext->MemMap[(a >> SH2_SHIFT)];
-        if ((uintptr_t)pr >= SH2_MAXHANDLER)
-        {
-            // Direct memory - 32-bit reads are naturally aligned and don't need word-swap
-            // because FBA memory for CPS3 is already word-swapped for 16-bit access,
-            // which effectively makes 32-bit reads correct Big Endian on Little Endian hosts.
-            unsigned int val = *((unsigned int *)(pr + (a & SH2_PAGEM)));
-
-            static int r32_log = 0;
-            if (r32_log++ < 20 && a >= 0x06000000 && a < 0x06000200)
-            {
-                printf("SH2DRC: R32 Direct PC=%08x A=%08x -> %08x\n", sh2 ? sh2->pc : 0, a, val);
-            }
-            return val;
-        }
-        if ((uintptr_t)pr < SH2_MAXHANDLER && pSh2Ext->ReadLong[(uintptr_t)pr])
-        {
-            // FBA ROM/RAM handlers on Little Endian hosts return data with 16-bit halves swapped (scrambled).
-            // We MUST un-swap it to get the correct native value.
-            typedef unsigned int (*ReadLongHandler)(unsigned int);
-            unsigned int val = ((ReadLongHandler)pSh2Ext->ReadLong[(uintptr_t)pr])(a);
-
-#ifdef VITA
-            // Undo FBA's half-swap to get correct Big Endian value
-            if ((uintptr_t)pr == 2)
-                val = (val << 16) | (val >> 16);
-#endif
-
-            static int r32h_log = 0;
-            if (r32h_log++ < 20 && a >= 0x06000000 && a < 0x06000200)
-            {
-                printf("SH2DRC: R32 Handler PC=%08x A=%08x -> %08x (h=%u)\n", sh2 ? sh2->pc : 0, a, val, (unsigned)(uintptr_t)pr);
-            }
-            return val;
-        }
-        return 0xFFFFFFFF;
+        
+        if ((uintptr_t)pr >= SH2_MAXHANDLER){
+		    return *((unsigned int *)(pr + (a & SH2_PAGEM)));
+	    }
+	    u32 val = pSh2Ext->ReadLong[(uintptr_t)pr](a);
+        return val;
     }
 
     // Write handlers - use pSh2Ext->MemMap for writes with validation
@@ -325,48 +231,17 @@ extern "C"
 #endif
             return;
         }
-        if ((uintptr_t)pr < SH2_MAXHANDLER && pSh2Ext->WriteByte[(uintptr_t)pr])
-        {
-            pSh2Ext->WriteByte[(uintptr_t)pr](a, d);
-            return;
-        }
-        static int w8_unmapped = 0;
-        if (w8_unmapped++ < 10)
-            printf("SH2DRC: Write8 unmapped %08x = %02x\n", a, d);
+        pSh2Ext->WriteByte[(uintptr_t)pr](a, d);
+        return;
     }
 
     void REGPARM(3) p32x_sh2_write16(u32 a, u32 d, SH2_DRC *sh2)
     {
-        if (!pSh2Ext)
-            return;
-
-        if (sh2 && sh2->pc >= 0x06000840 && sh2->pc <= 0x06000900)
-        {
-            static int w16_trace = 0;
-            if (w16_trace++ < 200)
-                printf("SH2DRC: W16 PC=%08x A=%08x D=%04x\n", sh2->pc, a, d & 0xFFFF);
-        }
-
         unsigned char *pr = pSh2Ext->MemMap[(a >> SH2_SHIFT) + SH2_WADD];
 
-        // Force handler for Palette RAM (0x0408xxxx) to trigger update logic
-        if (a >= 0x04080000 && a < 0x040c0000)
-        {
-#ifdef VITA
-            // FBA handers expect swapped bytes on Little Endian hosts
-            d = (d << 8) | (d >> 8);
-#endif
-            // HW Palette Handler is index 4 in cps3run.cpp
-            if (pSh2Ext->WriteWord[4])
-                pSh2Ext->WriteWord[4](a, d);
-            else
-                printf("SH2DRC: ERROR - Palette Handler 4 missing!\n");
-            return;
-        }
 
         if ((uintptr_t)pr >= SH2_MAXHANDLER)
         {
-// Apply same swap as read16
 #ifndef MSB_FIRST
             u32 addr_swapped = a ^ 0x02;
             *((unsigned short *)(pr + (addr_swapped & SH2_PAGEM))) = (unsigned short)d;
@@ -375,66 +250,22 @@ extern "C"
 #endif
             return;
         }
-        if ((uintptr_t)pr < SH2_MAXHANDLER && pSh2Ext->WriteWord[(uintptr_t)pr])
-        {
-#ifdef VITA
-            // FBA handers expect swapped bytes on Little Endian hosts
-            if ((uintptr_t)pr == 2)
-                d = (d << 8) | (d >> 8);
-#endif
-            pSh2Ext->WriteWord[(uintptr_t)pr](a, d);
-            return;
-        }
-        static int w16_unmapped = 0;
-        if (w16_unmapped++ < 10)
-            printf("SH2DRC: Write16 unmapped %08x = %04x\n", a, d);
+        pSh2Ext->WriteWord[(uintptr_t)pr](a, d);
+        return;
     }
-
+    
     void REGPARM(3) p32x_sh2_write32(u32 a, u32 d, SH2_DRC *sh2)
     {
-        if (!pSh2Ext)
-            return;
-
-        if (sh2 && sh2->pc >= 0x06000840 && sh2->pc <= 0x06000900)
-        {
-            static int w32_trace = 0;
-            if (w32_trace++ < 200)
-            {
-                u32 op = p32x_sh2_read16(sh2->pc, sh2);
-                printf("SH2DRC: W32 PC=%08x OP=%04x A=%08x D=%08x\n", sh2->pc, op & 0xFFFF, a, d);
-            }
-        }
-        if (a >= 0x06000000 && a < 0x06000100)
-        {
-            static int w32_vec_trace = 0;
-            if (w32_vec_trace++ < 50)
-                printf("SH2DRC: W32V PC=%08x A=%08x D=%08x\n", sh2 ? sh2->pc : 0, a, d);
-        }
 
         unsigned char *pr = pSh2Ext->MemMap[(a >> SH2_SHIFT) + SH2_WADD];
 
-        // Force handler for Palette RAM (0x0408xxxx) to trigger update logic
-        int force_handler = (a >= 0x04080000 && a < 0x040c0000);
-
-        if (!force_handler && (uintptr_t)pr >= SH2_MAXHANDLER)
+        if ((uintptr_t)pr >= SH2_MAXHANDLER)
         {
-            // Direct memory
-#ifndef MSB_FIRST
-            // CPS3 stores 16-bit words swapped on little-endian hosts
-            // u32 sd = (d << 16) | (d >> 16); // FIX: No swap needed for 32-bit access!
             *((unsigned int *)(pr + (a & SH2_PAGEM))) = (unsigned int)d;
-#else
-            *((unsigned int *)(pr + (a & SH2_PAGEM))) = (unsigned int)d;
-#endif
             return;
         }
-
-        // Try handler
-        if ((uintptr_t)pr < SH2_MAXHANDLER && pSh2Ext->WriteLong[(uintptr_t)pr])
-        {
-            pSh2Ext->WriteLong[(uintptr_t)pr](a, d);
-            return;
-        }
+        pSh2Ext->WriteLong[(uintptr_t)pr](a, d);
+        return;
     }
 
     u32 REGPARM(3) p32x_sh2_poll_memory8(u32 a, u32 d, SH2_DRC *sh2) { return p32x_sh2_read8(a, sh2); }
@@ -445,18 +276,6 @@ extern "C"
     // Returns pointer TO the data at address 'a', or NULL if not directly mappable
     void *p32x_sh2_get_mem_ptr(u32 a, u32 *mask, SH2_DRC *sh2)
     {
-#ifdef VITA
-        // Force handler-based access on Vita to avoid endian/alias issues
-        static int mp_log = 0;
-        if (mp_log++ < 5)
-            printf("SH2DRC: p32x_sh2_get_mem_ptr disabled on Vita (a=%08x)\n", a);
-        return NULL;
-#else
-        if (!pSh2Ext)
-        {
-            printf("SH2DRC: p32x_sh2_get_mem_ptr - pSh2Ext is NULL!\n");
-            return NULL;
-        }
 
         // Get the pointer from FBA's FETCH map (for fetching instructions)
         // FBA's MemMap layout:
@@ -483,7 +302,6 @@ extern "C"
         printf("SH2DRC: p32x_sh2_get_mem_ptr a=%08x -> NULL (pr=%p, handler=%d)\n",
                a, (void *)pr, (int)(uintptr_t)pr);
         return NULL;
-#endif
     }
 
     // Polling detection
@@ -517,6 +335,9 @@ extern "C"
 
     int p32x_sh2_mem_is_rom(u32 a, SH2_DRC *sh2)
     {
+        // ROM = address has no write handler (write map entry is a handler index < SH2_MAXHANDLER)
+        //unsigned char *pr_write = pSh2Ext->MemMap[(a >> SH2_SHIFT) + SH2_WADD];
+        //return ((uintptr_t)pr_write < SH2_MAXHANDLER) ? 1 : 0;
         return 0;
     }
 
@@ -667,6 +488,20 @@ void Sh2DrcInit()
     // Setup memory maps BEFORE sh2_drc_init so the DRC has valid pointers
     sh2_drc_setup_mem_maps();
 
+    // Setup memory region pointers for the DRC (used for constant data optimization)
+    // CPS3 memory map:
+    //   0x00000000 = BIOS (RomBios)
+    //   0x02000000 = Main RAM (RamMain)
+    //   0x06000000 = Game ROM decrypted (RomGame_D)
+    //   0xE0000000 = Data Array (internal cache)
+    sh2_drc_ctx.p_bios  = pSh2Ext->MemMap[0x00000000 >> SH2_SHIFT];
+    sh2_drc_ctx.p_sdram = pSh2Ext->MemMap[0x02000000 >> SH2_SHIFT];
+    sh2_drc_ctx.p_rom   = pSh2Ext->MemMap[0x06000000 >> SH2_SHIFT];
+    sh2_drc_ctx.p_da    = sh2_drc_ctx.data_array;
+
+    printf("SH2DRC: p_bios=%p p_sdram=%p p_rom=%p p_da=%p\n",
+           sh2_drc_ctx.p_bios, sh2_drc_ctx.p_sdram, sh2_drc_ctx.p_rom, sh2_drc_ctx.p_da);
+
     // Initialize DRC context with starting state from FBA sh2
     sh2_drc_ctx.pc = sh2->pc;
     sh2_drc_ctx.r[15] = sh2->r[15];
@@ -747,7 +582,7 @@ INT32 Sh2RunDrc(INT32 cycles)
     // Add more if needed, e.g., sh2_drc_ctx.frc = sh2->frc; if field exists
 
     // DEBUG: Dump RAM on first run to verify code
-    static bool ram_dumped = false;
+    static bool ram_dumped = true;
     if (!ram_dumped && sh2_drc_ctx.pc == 0x06000ea0) // Wait for start PC
     {
         printf("SH2DRC: Dumping RAM 06000000-06040000...\n");
@@ -811,13 +646,46 @@ INT32 Sh2RunDrc(INT32 cycles)
     sh2_drc_ctx.pending_irl = 0;
 
     static int run_count = 0;
-    printf("SH2DRC: Run %d cycles. PC=0x%08x IRQ=%d\n", cycles_to_run, sh2_drc_ctx.pc, level);
+    //printf("SH2DRC: Run %d cycles. PC=0x%08x IRQ=%d\n", cycles_to_run, sh2_drc_ctx.pc, level);
 
     // Execute
-    sh2_drc_record_trace(&sh2_drc_ctx);
+    //sh2_drc_record_trace(&sh2_drc_ctx);
 
     int cycles_remaining = 0;
+#if DRC_STEP_LOG
+    int cycles_left = cycles_to_run;
+    static int logged_steps = 0;
+
+    while (cycles_left > 0)
+    {
+        if (logged_steps < DRC_STEP_MAX)
+        {
+            sh2_drc_log_step(&sh2_drc_ctx);
+            logged_steps++;
+            
+            // Step 1 cycle
+            int chunk = 1;
+            int rem = sh2_execute_drc(&sh2_drc_ctx, chunk);
+            int executed = chunk - rem;
+            
+            // Failsafe
+            if (executed <= 0) executed = 1;
+            
+            cycles_left -= executed;
+        }
+        else
+        {
+            abort();
+            // Run rest
+            int rem = sh2_execute_drc(&sh2_drc_ctx, cycles_left);
+            cycles_left = rem; 
+            break;
+        }
+    }
+    cycles_remaining = cycles_left;
+#else
     cycles_remaining = sh2_execute_drc(&sh2_drc_ctx, cycles_to_run);
+#endif
 
     // Debug: dump if PC looks corrupt
     if (sh2_drc_ctx.pc >= 0xF0000000 || sh2_drc_ctx.pc == 0)

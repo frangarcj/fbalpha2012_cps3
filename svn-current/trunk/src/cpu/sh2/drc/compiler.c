@@ -55,13 +55,10 @@
 #define ALIAS_REGISTERS 1
 #define REMAP_REGISTER 1
 #if defined(VITA)
-#define LOOP_DETECTION 1
-#define LOOP_OPTIMIZER 1
 #include <psp2/kernel/clib.h>
-#else
+#endif
 #define LOOP_DETECTION 1
 #define LOOP_OPTIMIZER 1
-#endif
 #define T_OPTIMIZER 1
 #define DIV_OPTIMIZER 1
 
@@ -613,11 +610,6 @@ static int dr_ctx_get_mem_ptr(SH2_DRC *sh2, u32 a, u32 *mask)
   memptr = p32x_sh2_get_mem_ptr(a, mask, sh2);
   if (memptr == NULL)
     return poffs;
-
-#if defined(VITA)
-  // Force handler-based access on Vita to avoid endian/alias issues
-  return poffs;
-#endif
 
   if (memptr == sh2->p_bios) // BIOS
     poffs = offsetof(SH2_DRC, p_bios);
@@ -3702,18 +3694,6 @@ static void REGPARM(2) * sh2_translate(SH2_DRC *sh2, int tcache_id)
     printf("invalid PC, aborting: %08lx\n", (long)base_pc);
     // FIXME: be less destructive
     exit(1);
-  }
-
-  {
-    u32 dpc = sh2->pc;
-    printf("SH2DRC: Block Dump @ %08x:\n", dpc);
-    for (int k = 0; k < 32; k++)
-    {
-      printf("%04x ", FETCH_OP(dpc + k * 2));
-      if ((k & 7) == 7)
-        printf("\n");
-    }
-    printf("\n");
   }
 
   // initial passes to disassemble and analyze the block

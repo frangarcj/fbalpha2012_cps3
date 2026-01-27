@@ -41,6 +41,14 @@
 #define FAST_OP_FETCH 1
 #define USE_JUMPTABLE 1
 
+// Compile-time switch: 1 = Use DRC (JIT), 0 = Use Interpreter
+// Only effective when DRC_SH2 is defined
+#if defined(VITA) && defined(DRC_SH2)
+#define USE_DRC_SH2 1  // Set to 0 to force interpreter on Vita
+#else
+#define USE_DRC_SH2 0
+#endif
+
 #if USE_JUMPTABLE
 static void sh2_init_jumptable(void);
 #endif
@@ -3501,8 +3509,8 @@ static UINT32 sh2_internal_r(UINT32 offset, UINT32 /*mem_mask*/)
 
 int Sh2Run(int cycles)
 {
-#if defined(VITA) && defined(DRC_SH2)
-	// Use JIT on Vita
+#if USE_DRC_SH2
+	// Use JIT (DRC) - set USE_DRC_SH2 to 0 in sh2.cpp to force interpreter
 	return Sh2RunDrc(cycles);
 #endif
 	sh2->sh2_icount = cycles;
@@ -3572,8 +3580,8 @@ int Sh2Run(int cycles)
 
 int Sh2Run(int cycles)
 {
-#if defined(VITA) && defined(DRC_SH2)
-	// Use JIT on Vita
+#if USE_DRC_SH2
+	// Use JIT (DRC) - set USE_DRC_SH2 to 0 in sh2.cpp to force interpreter
 	return Sh2RunDrc(cycles);
 #endif
 	sh2->sh2_icount = cycles;
@@ -3786,4 +3794,6 @@ int Sh2Scan(int nAction)
 }
 
 // Include DRC adapter at end (needs access to SH2 internals like pSh2Ext)
+#if defined(DRC_SH2)
 #include "sh2_drc_fba.inl"
+#endif

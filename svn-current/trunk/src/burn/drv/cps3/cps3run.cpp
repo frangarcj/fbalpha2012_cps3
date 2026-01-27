@@ -850,19 +850,11 @@ static UINT32 __fastcall cps3RomReadLong(UINT32 addr)
 	if (main_flash.flash_mode == FM_NORMAL)
 		retvalue = *(UINT32 *)(RomGame_D + (addr & 0x00ffffff));
 
-#ifndef MSB_FIRST
-	retvalue = (retvalue << 16) | (retvalue >> 16);
-#endif
-
 	pc = Sh2GetPC(0);
 	if (pc == cps3_bios_test_hack || pc == cps3_game_test_hack)
 	{
 		if (main_flash.flash_mode == FM_NORMAL)
 			retvalue = *(UINT32 *)(RomGame + (addr & 0x00ffffff));
-
-#ifndef MSB_FIRST
-		retvalue = (retvalue << 16) | (retvalue >> 16);
-#endif
 	}
 	return retvalue;
 }

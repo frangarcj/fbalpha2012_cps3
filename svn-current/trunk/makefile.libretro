@@ -1,4 +1,4 @@
-DEBUG = 1
+DEBUG = 0
 LIBRETRO_OPTIMIZATIONS = 1
 FRONTEND_SUPPORTS_RGB565 = 1
 HAVE_GRIFFIN = 0
@@ -169,12 +169,13 @@ else ifeq ($(platform), vita)
 	CC_AS = arm-vita-eabi-gcc$(EXE_EXT)
 	CXX = arm-vita-eabi-g++$(EXE_EXT)
 	AR = arm-vita-eabi-ar$(EXE_EXT)
-   PLATFORM_DEFINES += -DVITA -DDRC_SH2
+   PLATFORM_DEFINES += -DVITA
    CFLAGS += -fno-optimize-sibling-calls -mcpu=cortex-a9 -mfpu=neon-fp16 -mfloat-abi=hard -ffast-math -fomit-frame-pointer
    CXXFLAGS += -fno-optimize-sibling-calls -mcpu=cortex-a9 -mfpu=neon-fp16 -mfloat-abi=hard -ffast-math -fomit-frame-pointer
    EXTERNAL_ZLIB = 1
 	STATIC_LINKING = 1
-   USE_DRC_SH2 = 1
+   # Set to 1 for DRC (JIT), 0 for Interpreter
+   USE_DRC_SH2 = 0
 
 # Classic Platforms ####################
 # Platform affix = classic_<ISA>_<µARCH>
@@ -451,6 +452,7 @@ PERL = perl$(EXE_EXT)
 EXE_PREFIX = ./
 
 ifeq ($(platform), vita)
+ifeq ($(USE_DRC_SH2), 1)
    FBA_DEFINES += -DDRC_SH2
    INCFLAGS += -I$(FBA_CPU_DIR)/sh2/drc
    VITA_DRC_SRCS := $(filter-out %emit_arm.c, $(wildcard $(FBA_CPU_DIR)/sh2/drc/*.c))
@@ -458,6 +460,7 @@ ifeq ($(platform), vita)
    OBJS += $(VITA_DRC_SRCS:.c=.o)
    # Force ARM mode for DRC files (JIT generates ARM code, needs ARM-mode C functions)
    DRC_ARM_FLAGS := -marm
+endif
 endif
 
 .PHONY: clean generate-files generate-files-clean clean-objs
