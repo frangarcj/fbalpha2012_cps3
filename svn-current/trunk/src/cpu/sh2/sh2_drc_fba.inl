@@ -184,7 +184,6 @@ extern "C"
 
     u32 REGPARM(2) p32x_sh2_read16(u32 a, SH2_DRC *sh2)
     {
-
         unsigned char *pr = pSh2Ext->MemMap[(a >> SH2_SHIFT)];
         if ((uintptr_t)pr >= SH2_MAXHANDLER)
         {
@@ -199,7 +198,7 @@ extern "C"
             return (int)(signed short)v;
 #endif
         }
-        return pSh2Ext->ReadWord[(uintptr_t)pr](a);
+        return (int)(signed short)pSh2Ext->ReadWord[(uintptr_t)pr](a);
     }
 
     u32 REGPARM(2) p32x_sh2_read32(u32 a, SH2_DRC *sh2)

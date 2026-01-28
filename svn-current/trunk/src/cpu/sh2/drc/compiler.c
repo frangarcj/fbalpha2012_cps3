@@ -881,10 +881,6 @@ static void dr_block_link(struct block_entry *be, struct block_link *bl, int emi
   dbg(2, "- %slink from %p to pc %08x entry %p", emit_jump ? "" : "early ",
       bl->jump, bl->target_pc, be->tcache_ptr);
 
-  if (bl->target_pc == 0x06000840)
-    printf("SH2DRC: LINK_MARK target_pc=%08x jump=%p entry=%p emit=%d\n",
-           bl->target_pc, bl->jump, be->tcache_ptr, emit_jump);
-
   if (emit_jump)
   {
     u8 *jump = bl->jump;
@@ -1308,18 +1304,7 @@ static void dr_activate_block(struct block_desc *bd, int tcache_id, int is_slave
 
 static void REGPARM(3) * dr_lookup_block(u32 pc, SH2_DRC *sh2, int *tcache_id)
 {
-  printf("SH2DRC: dr_lookup_block PC=%08x\n", pc);
   static int lookup_count = 0;
-  if (lookup_count++ < 200 && pc >= 0x06000e00 && pc <= 0x06001000)
-  {
-    printf("SH2DRC: state PC=%08x SR=%08x R3=%08x R4=%08x R5=%08x R15=%08x\n",
-           pc, sh2->sr, sh2->r[3], sh2->r[4], sh2->r[5], sh2->r[15]);
-  }
-  if (pc == 0x06000840)
-  {
-    printf("SH2DRC: state PC=%08x SR=%08x R0=%08x R1=%08x R2=%08x R3=%08x R4=%08x R5=%08x R10=%08x R15=%08x PR=%08x\n",
-           pc, sh2->sr, sh2->r[0], sh2->r[1], sh2->r[2], sh2->r[3], sh2->r[4], sh2->r[5], sh2->r[10], sh2->r[15], sh2->pr);
-  }
   struct block_entry *be = NULL;
   void *block = NULL;
 
@@ -3608,7 +3593,6 @@ static void sh2_smc_rm_blocks(u32 a, int len, int tcache_id, int free);
 
 static void REGPARM(2) * sh2_translate(SH2_DRC *sh2, int tcache_id)
 {
-  printf("SH2DRC: sh2_translate PC=%08x, tid=%d\n", sh2->pc, tcache_id);
 
   drc_fetch_sh2 = sh2;
 
@@ -5853,9 +5837,7 @@ static void sh2_generate_utils(void)
   EMITH_SJMP_START(DCOND_CS);
   emith_and_r_r_c(DCOND_CC, arg0, arg3);
   emith_read_r_r_r_c(DCOND_CC, RET_REG, arg2, arg0);
-#if !defined(VITA)
   emit_le_swap(DCOND_CC, RET_REG);
-#endif
   emith_ret_c(DCOND_CC);
   EMITH_SJMP_END(DCOND_CS);
   emith_move_r_r_ptr(arg1, CONTEXT_REG);
