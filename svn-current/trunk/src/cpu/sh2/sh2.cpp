@@ -45,9 +45,19 @@
 // Only effective when DRC_SH2 is defined
 #if defined(VITA) && defined(DRC_SH2)
 #define USE_DRC_SH2 1  // Set to 0 to force interpreter on Vita
+// Forward declarations for DRC
+void Sh2DrcInit(void);
+void Sh2DrcReset(void);
+INT32 Sh2RunDrc(INT32 cycles);
+void Sh2DrcExit(void);
 #else
 #define USE_DRC_SH2 0
 #endif
+
+// Interpreter step logging for trace comparison
+// Set to 1 to enable, 0 to disable
+#define INTERP_STEP_LOG 0
+#define INTERP_STEP_MAX 10000000
 
 #if USE_JUMPTABLE
 static void sh2_init_jumptable(void);
@@ -80,21 +90,111 @@ typedef struct
 	int irq_priority;
 } irq_entry;
 
-typedef struct
+typedef struct SH2_
 {
-	UINT32 ppc;
-	UINT32 pc;
-	UINT32 pr;
-	UINT32 sr;
-	UINT32 gbr, vbr;
-	UINT32 mach, macl;
-	UINT32 r[16];
+	// Registers - MUST be first and match compiler.c expectations
+	// --- STRICT MATCH with SH2_DRC from picodrive_sh2.h ---
+	
+	// registers. this MUST correlate with enum sh2_reg_e.
+	UINT32	r[16];		// 00-3c
+	UINT32	pc;			// 40
+	UINT32	ppc;
+	UINT32	pr;
+	UINT32	sr;
+	UINT32	gbr, vbr;	// 50, 54
+	UINT32	mach, macl;	// 58, 5c
+
+#ifdef DRC_SH2
+	// common
+	const void	*read8_map;
+	const void	*read16_map;
+	const void	*read32_map;
+	const void	**write8_tab;
+	const void	**write16_tab;
+	const void	**write32_tab;
+
+	// drc stuff
+	int		drc_tmp;
+	int		irq_cycles;
+	void		*p_bios;	// convenience pointers
+	void		*p_da;
+	void		*p_sdram;
+	void		*p_rom;
+	void		*p_dram;
+	void		*p_drcblk_da;
+	void		*p_drcblk_ram;
+	unsigned int	pdb_io_csum[2];
+
+// Flags defined in compiler.c/picodrive_sh2.h
+#define SH2_STATE_RUN   (1 << 0)
+#define SH2_STATE_SLEEP (1 << 1)
+#define SH2_STATE_CPOLL (1 << 2)
+#define SH2_STATE_VPOLL (1 << 3)
+#define SH2_STATE_RPOLL (1 << 4)
+#define SH2_TIMER_RUN   (1 << 6)
+#define SH2_IN_DRC      (1 << 7)
+
+	unsigned int	state;
+	UINT32	poll_addr;
+	unsigned int	poll_cycles;
+	int		poll_cnt;
+	
+#define SH2_NO_POLLING	(1 << 10)
+	int		no_polling;
+
+	// DRC branch cache. size must be 2^n and <=128
+	int rts_cache_idx;
+	struct { UINT32 pc; void *code; } rts_cache[16];
+	struct { UINT32 pc; void *code; } branch_cache[128];
+
+	// interpreter stuff
+	INT32		icount;		// cycles left in current timeslice (was sh2_icount)
+	unsigned int	ea;
+	unsigned int	delay;
+	unsigned int	test_irq;
+
+	// IRQ State for DRC
+	int	pending_level;		// MAX(pending_irl, pending_int_irq)
+	int	pending_irl;
+	int	pending_int_irq;	// internal irq
+	int	pending_int_vector;
+	int	(*irq_callback)(struct SH2_ *sh2, int level); // REGPARM(2) implicitly handled by FBA calling convention?
+	int	is_slave;
+
+	unsigned int	cycles_timeslice; // (was sh2_cycles_to_run)
+
+	struct SH2_	*other_sh2;
+	int		(*run)(struct SH2_ *, int);
+
+	// we use 68k reference cycles for easier sync
+	unsigned int	m68krcycles_done;
+	unsigned int	mult_m68k_to_sh2;
+	unsigned int	mult_sh2_to_m68k;
+
+	UINT8		data_array[0x1000]; // cache (can be used as RAM)
+	UINT32		peri_regs[0x200/4]; // peripheral regs - Placeholders to maintain offset
+#endif
+
+	// --- FBA Specific fields --- 
+	
+#ifndef DRC_SH2
+	// These only exist if DRC is OFF, otherwise mapped to DRC fields
 	UINT32 ea;
 	UINT32 delay;
+	UINT32 test_irq;
+    INT32 sh2_icount;
+    UINT32 sh2_cycles_to_run;
+#else
+    // Compatibility macros for FBA code
+    #define sh2_icount icount
+    #define sh2_cycles_to_run cycles_timeslice
+#endif
+
 	UINT32 cpu_off;
 	UINT32 dvsr, dvdnth, dvdntl, dvcr;
-	UINT32 pending_irq;
-	UINT32 test_irq;
+	
+	UINT32 pending_irq; // FBA bitmaskIRQ 
+	
 	irq_entry irq_queue[16];
 
 	INT8 irq_line_state[17];
@@ -122,11 +222,13 @@ typedef struct
 	//	int     is_slave, cpu_number;
 
 	UINT32 cycle_counts;
-	UINT32 sh2_cycles_to_run;
-	INT32 sh2_icount;
 	int sh2_total_cycles;
 
+#ifdef DRC_SH2
+    // If we have duplicate irq_callback, keep one
+#else
 	int (*irq_callback)(int irqline);
+#endif
 
 } SH2;
 
@@ -3509,8 +3611,13 @@ static UINT32 sh2_internal_r(UINT32 offset, UINT32 /*mem_mask*/)
 
 int Sh2Run(int cycles)
 {
-#if USE_DRC_SH2
-	// Use JIT (DRC) - set USE_DRC_SH2 to 0 in sh2.cpp to force interpreter
+	    // Debug logging for cycle comparison
+    static int frame_cycles = 0;
+    static int calls = 0;
+    
+    int cycles_before = cycles;
+#if defined(VITA) && defined(DRC_SH2)
+	// Use JIT on Vita
 	return Sh2RunDrc(cycles);
 #endif
 	sh2->sh2_icount = cycles;
@@ -3540,6 +3647,22 @@ int Sh2Run(int cycles)
 		}
 
 		sh2->ppc = sh2->pc;
+
+#if INTERP_STEP_LOG
+		{
+			static int interp_step_count = 0;
+			UINT32 fetch_pc = sh2->delay ? (sh2->delay & AM) : ((sh2->pc - 2) & AM);
+			sceClibPrintf("INTERP_STEP %d: PC=%08x SR=%08x R0=%08x R1=%08x R2=%08x R3=%08x "
+			       "R4=%08x R5=%08x R6=%08x R7=%08x R8=%08x R9=%08x R10=%08x R11=%08x "
+			       "R12=%08x R13=%08x R14=%08x R15=%08x\n",
+			       interp_step_count, fetch_pc, sh2->sr,
+			       sh2->r[0], sh2->r[1], sh2->r[2], sh2->r[3],
+			       sh2->r[4], sh2->r[5], sh2->r[6], sh2->r[7],
+			       sh2->r[8], sh2->r[9], sh2->r[10], sh2->r[11],
+			       sh2->r[12], sh2->r[13], sh2->r[14], sh2->r[15]);
+			interp_step_count++;
+		}
+#endif
 
 		opcode_jumptable[opcode](opcode);
 
@@ -3573,7 +3696,15 @@ int Sh2Run(int cycles)
 
 	sh2->cycle_counts += cycles - (UINT32)sh2->sh2_icount;
 
-	return cycles - sh2->sh2_icount;
+	int executed = cycles - sh2->sh2_icount;
+    frame_cycles += executed;
+    calls++;
+    if (calls < 50 || calls % 240 == 0) // approx every 60 frames (if 4 calls/frame)
+    {
+        sceClibPrintf("INTPSH2: Executed %d cycles in last batch (asked %d). Total frame: %d\n", executed, cycles, frame_cycles);
+        if (calls % 240 == 0) frame_cycles = 0;
+    }
+    return executed;
 }
 
 #else
@@ -3584,6 +3715,13 @@ int Sh2Run(int cycles)
 	// Use JIT (DRC) - set USE_DRC_SH2 to 0 in sh2.cpp to force interpreter
 	return Sh2RunDrc(cycles);
 #endif
+    
+    // Debug logging for cycle comparison
+    static int frame_cycles = 0;
+    static int calls = 0;
+    
+    int cycles_before = cycles;
+
 	sh2->sh2_icount = cycles;
 	sh2->sh2_cycles_to_run = cycles;
 
@@ -3698,7 +3836,15 @@ int Sh2Run(int cycles)
 
 	sh2->sh2_cycles_to_run = sh2->sh2_icount;
 
-	return cycles - sh2->sh2_icount;
+    int executed = cycles - sh2->sh2_icount;
+    frame_cycles += executed;
+    calls++;
+    if (calls < 50 || calls % 240 == 0) // approx every 60 frames (if 4 calls/frame)
+    {
+        sceClibPrintf("INTPSH2: Executed %d cycles in last batch (asked %d). Total frame: %d\n", executed, cycles, frame_cycles);
+        if (calls % 240 == 0) frame_cycles = 0;
+    }
+    return executed;
 }
 
 #endif

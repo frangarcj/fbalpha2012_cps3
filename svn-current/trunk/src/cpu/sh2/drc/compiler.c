@@ -108,6 +108,7 @@ static int insns_compiled, hash_collisions, host_insn_count;
 #endif
 
 ///
+SH2_DRC *sh2_drc_ctx = NULL;
 static SH2_DRC *drc_fetch_sh2;
 
 #define FETCH_OP(pc) \
@@ -1375,26 +1376,11 @@ static u8 *dr_prepare_cache(int tcache_id, int insn_count, int entry_count)
   {
     // deleted some block(s), clear branch cache and return stack
 #if BRANCH_CACHE
-    if (tcache_id)
-      memset32(sh2s[tcache_id - 1].branch_cache, -1, sizeof(sh2s[0].branch_cache) / 4);
-    else
-    {
-      memset32(sh2s[0].branch_cache, -1, sizeof(sh2s[0].branch_cache) / 4);
-      memset32(sh2s[1].branch_cache, -1, sizeof(sh2s[1].branch_cache) / 4);
-    }
+      memset32(sh2_drc_ctx->branch_cache, -1, sizeof(sh2_drc_ctx->branch_cache) / 4);
 #endif
 #if CALL_STACK
-    if (tcache_id)
-    {
-      memset32(sh2s[tcache_id - 1].rts_cache, -1, sizeof(sh2s[0].rts_cache) / 4);
-      sh2s[tcache_id - 1].rts_cache_idx = 0;
-    }
-    else
-    {
-      memset32(sh2s[0].rts_cache, -1, sizeof(sh2s[0].rts_cache) / 4);
-      memset32(sh2s[1].rts_cache, -1, sizeof(sh2s[1].rts_cache) / 4);
-      sh2s[0].rts_cache_idx = sh2s[1].rts_cache_idx = 0;
-    }
+      memset32(sh2_drc_ctx->rts_cache, -1, sizeof(sh2_drc_ctx->rts_cache) / 4);
+      sh2_drc_ctx->rts_cache_idx = 0;
 #endif
   }
 
@@ -1423,21 +1409,26 @@ static void dr_flush_tcache(int tcid)
   { // ROM, RAM
     memset(Pico32xMem->drcblk_ram, 0, sizeof(Pico32xMem->drcblk_ram));
     memset(Pico32xMem->drclit_ram, 0, sizeof(Pico32xMem->drclit_ram));
-    memset(sh2s[0].branch_cache, -1, sizeof(sh2s[0].branch_cache));
-    memset(sh2s[1].branch_cache, -1, sizeof(sh2s[1].branch_cache));
-    memset(sh2s[0].rts_cache, -1, sizeof(sh2s[0].rts_cache));
-    memset(sh2s[1].rts_cache, -1, sizeof(sh2s[1].rts_cache));
-    sh2s[0].rts_cache_idx = sh2s[1].rts_cache_idx = 0;
+    if (sh2_drc_ctx) {
+        memset(sh2_drc_ctx->branch_cache, -1, sizeof(sh2_drc_ctx->branch_cache));
+        memset(sh2_drc_ctx->rts_cache, -1, sizeof(sh2_drc_ctx->rts_cache));
+        sh2_drc_ctx->rts_cache_idx = 0;
+    }
   }
   else
   {
+    // tcid 1 is effectively the CPU-specific DA (but assume single CPU)
     memset(Pico32xMem->drcblk_ram, 0, sizeof(Pico32xMem->drcblk_ram));
     memset(Pico32xMem->drclit_ram, 0, sizeof(Pico32xMem->drclit_ram));
-    memset(Pico32xMem->drcblk_da[tcid - 1], 0, sizeof(Pico32xMem->drcblk_da[tcid - 1]));
-    memset(Pico32xMem->drclit_da[tcid - 1], 0, sizeof(Pico32xMem->drclit_da[tcid - 1]));
-    memset(sh2s[tcid - 1].branch_cache, -1, sizeof(sh2s[0].branch_cache));
-    memset(sh2s[tcid - 1].rts_cache, -1, sizeof(sh2s[0].rts_cache));
-    sh2s[tcid - 1].rts_cache_idx = 0;
+    // Single CPU optimization - only use index 0
+    memset(Pico32xMem->drcblk_da[0], 0, sizeof(Pico32xMem->drcblk_da[0]));
+    memset(Pico32xMem->drclit_da[0], 0, sizeof(Pico32xMem->drclit_da[0]));
+    
+    if (sh2_drc_ctx) {
+        memset(sh2_drc_ctx->branch_cache, -1, sizeof(sh2_drc_ctx->branch_cache));
+        memset(sh2_drc_ctx->rts_cache, -1, sizeof(sh2_drc_ctx->rts_cache));
+        sh2_drc_ctx->rts_cache_idx = 0;
+    }
   }
 #if (DRC_DEBUG & 4)
   tcache_dsm_ptrs[tcid] = tcache_ring[tcid].base;
@@ -2926,13 +2917,13 @@ static int emit_get_rom_data(SH2_DRC *sh2, sh2_reg_e r, s32 offs, int size, u32 
       switch (size & MF_SIZEMASK)
       {
       case 0:
-        *val = (s8)p32x_sh2_read8(a, sh2s);
+        *val = (s8)p32x_sh2_read8(a, sh2_drc_ctx);
         break; // 8
       case 1:
-        *val = (s16)p32x_sh2_read16(a, sh2s);
+        *val = (s16)p32x_sh2_read16(a, sh2_drc_ctx);
         break; // 16
       case 2:
-        *val = p32x_sh2_read32(a, sh2s);
+        *val = p32x_sh2_read32(a, sh2_drc_ctx);
         break; // 32
       }
       return 1;
@@ -5909,7 +5900,7 @@ static void sh2_generate_utils(void)
   emith_ctx_write(arg0, SHR_PC * 4);
 #if BRANCH_CACHE
   // check if PC is in branch target cache
-  emith_and_r_r_imm(arg1, arg0, (ARRAY_SIZE(sh2s->branch_cache) - 1) * 8);
+  emith_and_r_r_imm(arg1, arg0, (ARRAY_SIZE(sh2_drc_ctx->branch_cache) - 1) * 8);
   emith_add_r_r_r_lsl_ptr(arg1, CONTEXT_REG, arg1, sizeof(void *) == 8 ? 1 : 0);
   emith_read_r_r_offs(arg2, arg1, offsetof(SH2_DRC, branch_cache));
   emith_cmp_r_r(arg2, arg0);
@@ -5938,7 +5929,7 @@ static void sh2_generate_utils(void)
   emith_write_r_r_offs_c(DCOND_NE, arg3, arg2, 0);
 #endif
   emith_ctx_read_c(DCOND_NE, arg2, SHR_PC * 4);
-  emith_and_r_r_imm(arg1, arg2, (ARRAY_SIZE(sh2s->branch_cache) - 1) * 8);
+  emith_and_r_r_imm(arg1, arg2, (ARRAY_SIZE(sh2_drc_ctx->branch_cache) - 1) * 8);
   emith_add_r_r_r_lsl_ptr(arg1, CONTEXT_REG, arg1, sizeof(void *) == 8 ? 1 : 0);
   emith_write_r_r_offs_c(DCOND_NE, arg2, arg1, offsetof(SH2_DRC, branch_cache));
   emith_write_r_r_offs_ptr_c(DCOND_NE, RET_REG, arg1, offsetof(SH2_DRC, branch_cache) + sizeof(void *));
@@ -5962,7 +5953,7 @@ static void sh2_generate_utils(void)
   sh2_drc_dispatcher_call = (void *)tcache_ptr;
   emith_ctx_read(arg2, offsetof(SH2_DRC, rts_cache_idx));
   emith_add_r_imm(arg2, (u32)(2 * sizeof(void *)));
-  emith_and_r_imm(arg2, (ARRAY_SIZE(sh2s->rts_cache) - 1) * 2 * sizeof(void *));
+  emith_and_r_imm(arg2, (ARRAY_SIZE(sh2_drc_ctx->rts_cache) - 1) * 2 * sizeof(void *));
   emith_ctx_write(arg2, offsetof(SH2_DRC, rts_cache_idx));
   emith_add_r_r_r_lsl_ptr(arg3, CONTEXT_REG, arg2, 0);
   rcache_get_reg_arg(2, SHR_PR, NULL);
@@ -5992,7 +5983,7 @@ static void sh2_generate_utils(void)
 #endif
   emith_read_r_r_offs_ptr(arg0, arg1, offsetof(SH2_DRC, rts_cache) + sizeof(void *));
   emith_sub_r_imm(arg2, (u32)(2 * sizeof(void *)));
-  emith_and_r_imm(arg2, (ARRAY_SIZE(sh2s->rts_cache) - 1) * 2 * sizeof(void *));
+  emith_and_r_imm(arg2, (ARRAY_SIZE(sh2_drc_ctx->rts_cache) - 1) * 2 * sizeof(void *));
   emith_ctx_write(arg2, offsetof(SH2_DRC, rts_cache_idx));
 #if (DRC_DEBUG & 128)
   emith_move_r_ptr_imm(arg3, (uptr)&rchit);
@@ -6204,25 +6195,13 @@ static void sh2_smc_rm_blocks(u32 a, int len, int tcache_id, int free)
   }
 
 #if BRANCH_CACHE
-  if (tcache_id)
-    memset32(sh2s[tcache_id - 1].branch_cache, -1, sizeof(sh2s[0].branch_cache) / 4);
-  else
-  {
-    memset32(sh2s[0].branch_cache, -1, sizeof(sh2s[0].branch_cache) / 4);
-    memset32(sh2s[1].branch_cache, -1, sizeof(sh2s[1].branch_cache) / 4);
-  }
+  if (sh2_drc_ctx)
+    memset32(sh2_drc_ctx->branch_cache, -1, sizeof(sh2_drc_ctx->branch_cache) / 4);
 #endif
 #if CALL_STACK
-  if (tcache_id)
-  {
-    memset32(sh2s[tcache_id - 1].rts_cache, -1, sizeof(sh2s[0].rts_cache) / 4);
-    sh2s[tcache_id - 1].rts_cache_idx = 0;
-  }
-  else
-  {
-    memset32(sh2s[0].rts_cache, -1, sizeof(sh2s[0].rts_cache) / 4);
-    memset32(sh2s[1].rts_cache, -1, sizeof(sh2s[1].rts_cache) / 4);
-    sh2s[0].rts_cache_idx = sh2s[1].rts_cache_idx = 0;
+  if (sh2_drc_ctx) {
+    memset32(sh2_drc_ctx->rts_cache, -1, sizeof(sh2_drc_ctx->rts_cache) / 4);
+    sh2_drc_ctx->rts_cache_idx = 0;
   }
 #endif
 }
@@ -6381,38 +6360,25 @@ static void backtrace(void)
 #endif
 }
 
+// state_dump updated for single CPU
 static void state_dump(void)
 {
 #if (DRC_DEBUG & 2048)
   int i;
-
-  SH2_DUMP(&sh2s[0], "master");
-  printf("VBR msh2: %lx\n", (ulong)sh2s[0].vbr);
+  if (!sh2_drc_ctx) return;
+  
+  SH2_DUMP(sh2_drc_ctx, "master");
+  printf("VBR sh2: %lx\n", (ulong)sh2_drc_ctx->vbr);
   for (i = 0; i < 0x60; i++)
   {
-    printf("%08lx ", (ulong)p32x_sh2_read32(sh2s[0].vbr + i * 4, &sh2s[0]));
+    printf("%08lx ", (ulong)p32x_sh2_read32(sh2_drc_ctx->vbr + i * 4, sh2_drc_ctx));
     if ((i + 1) % 8 == 0)
       printf("\n");
   }
-  printf("stack msh2: %lx\n", (ulong)sh2s[0].r[15]);
+  printf("stack sh2: %lx\n", (ulong)sh2_drc_ctx->r[15]);
   for (i = -0x30; i < 0x30; i++)
   {
-    printf("%08lx ", (ulong)p32x_sh2_read32(sh2s[0].r[15] + i * 4, &sh2s[0]));
-    if ((i + 1) % 8 == 0)
-      printf("\n");
-  }
-  SH2_DUMP(&sh2s[1], "slave");
-  printf("VBR ssh2: %lx\n", (ulong)sh2s[1].vbr);
-  for (i = 0; i < 0x60; i++)
-  {
-    printf("%08lx ", (ulong)p32x_sh2_read32(sh2s[1].vbr + i * 4, &sh2s[1]));
-    if ((i + 1) % 8 == 0)
-      printf("\n");
-  }
-  printf("stack ssh2: %lx\n", (ulong)sh2s[1].r[15]);
-  for (i = -0x30; i < 0x30; i++)
-  {
-    printf("%08lx ", (ulong)p32x_sh2_read32(sh2s[1].r[15] + i * 4, &sh2s[1]));
+    printf("%08lx ", (ulong)p32x_sh2_read32(sh2_drc_ctx->r[15] + i * 4, sh2_drc_ctx));
     if ((i + 1) % 8 == 0)
       printf("\n");
   }
@@ -6424,37 +6390,24 @@ static void bcache_stats(void)
 #if (DRC_DEBUG & 128)
   int i;
 #if CALL_STACK
-  for (i = 1; i < ARRAY_SIZE(sh2s->rts_cache); i++)
-    if (sh2s[0].rts_cache[i].pc == -1 && sh2s[1].rts_cache[i].pc == -1)
+  for (i = 1; i < ARRAY_SIZE(sh2_drc_ctx->rts_cache); i++)
+    if (sh2_drc_ctx->rts_cache[i].pc == -1)
       break;
 
-  printf("return cache hits:%d misses:%d depth: %d index: %d/%d\n", rchit, rcmiss, i, sh2s[0].rts_cache_idx, sh2s[1].rts_cache_idx);
-  for (i = 0; i < ARRAY_SIZE(sh2s[0].rts_cache); i++)
+  printf("return cache hits:%d misses:%d depth: %d index: %d\n", rchit, rcmiss, i, sh2_drc_ctx->rts_cache_idx);
+  for (i = 0; i < ARRAY_SIZE(sh2_drc_ctx->rts_cache); i++)
   {
-    printf("%08lx ", (ulong)sh2s[0].rts_cache[i].pc);
-    if ((i + 1) % 8 == 0)
-      printf("\n");
-  }
-  for (i = 0; i < ARRAY_SIZE(sh2s[1].rts_cache); i++)
-  {
-    printf("%08lx ", (ulong)sh2s[1].rts_cache[i].pc);
+    printf("%08lx ", (ulong)sh2_drc_ctx->rts_cache[i].pc);
     if ((i + 1) % 8 == 0)
       printf("\n");
   }
 #endif
 #if BRANCH_CACHE
   printf("branch cache hits:%d misses:%d\n", bchit, bcmiss);
-  printf("branch cache master:\n");
-  for (i = 0; i < ARRAY_SIZE(sh2s[0].branch_cache); i++)
+  printf("branch cache:\n");
+  for (i = 0; i < ARRAY_SIZE(sh2_drc_ctx->branch_cache); i++)
   {
-    printf("%08lx ", (ulong)sh2s[0].branch_cache[i].pc);
-    if ((i + 1) % 8 == 0)
-      printf("\n");
-  }
-  printf("branch cache slave:\n");
-  for (i = 0; i < ARRAY_SIZE(sh2s[1].branch_cache); i++)
-  {
-    printf("%08lx ", (ulong)sh2s[1].branch_cache[i].pc);
+    printf("%08lx ", (ulong)sh2_drc_ctx->branch_cache[i].pc);
     if ((i + 1) % 8 == 0)
       printf("\n");
   }
@@ -6474,7 +6427,7 @@ void sh2_drc_flush_all(void)
   bcache_stats();
   dr_flush_tcache(0);
   dr_flush_tcache(1);
-  dr_flush_tcache(2);
+  // dr_flush_tcache(2); // Single CPU optimization
   Pico32x.emu_flags &= ~P32XF_DRC_ROM_C;
 }
 
@@ -6687,7 +6640,7 @@ u16 scan_block(u32 base_pc, int is_slave, u8 *op_flags, u32 *end_pc_out,
   memset(op_flags, 0, sizeof(*op_flags) * BLOCK_INSN_LIMIT);
   op_flags[0] |= OF_BTARGET; // block start is always a target
 
-  dr_pc_base = dr_get_pc_base(base_pc, &sh2s[!!is_slave]);
+  dr_pc_base = dr_get_pc_base(base_pc, sh2_drc_ctx);
 
   // 1st pass: disassemble
   for (i = 0, pc = base_pc;; i++, pc += 2)

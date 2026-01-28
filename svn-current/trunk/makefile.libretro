@@ -175,7 +175,7 @@ else ifeq ($(platform), vita)
    EXTERNAL_ZLIB = 1
 	STATIC_LINKING = 1
    # Set to 1 for DRC (JIT), 0 for Interpreter
-   USE_DRC_SH2 = 0
+   USE_DRC_SH2 = 1
 
 # Classic Platforms ####################
 # Platform affix = classic_<ISA>_<µARCH>

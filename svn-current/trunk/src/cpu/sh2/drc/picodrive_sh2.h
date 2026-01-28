@@ -80,23 +80,11 @@ typedef struct SH2_DRC_
 
 	unsigned int	cycles_timeslice;
 
-	struct SH2_DRC_	*other_sh2;
 	int		(*run)(struct SH2_DRC_ *, int);
-
-	// we use 68k reference cycles for easier sync
-	unsigned int	m68krcycles_done;
-	unsigned int	mult_m68k_to_sh2;
-	unsigned int	mult_sh2_to_m68k;
 
 	uint8_t		data_array[0x1000]; // cache (can be used as RAM)
 	uint32_t	peri_regs[0x200/4]; // peripheral regs
 } SH2_DRC;
-
-#define CYCLE_MULT_SHIFT 10
-#define C_M68K_TO_SH2(xsh2, c) \
-	(int)(((uint64_t)(c) * (xsh2)->mult_m68k_to_sh2) >> CYCLE_MULT_SHIFT)
-#define C_SH2_TO_M68K(xsh2, c) \
-	(int)(((uint64_t)(c+3U) * (xsh2)->mult_sh2_to_m68k) >> CYCLE_MULT_SHIFT)
 
 int  sh2_init(SH2_DRC *sh2, int is_slave, SH2_DRC *other_sh2);
 void sh2_finish(SH2_DRC *sh2);
@@ -148,6 +136,6 @@ void do_sh2_trace(SH2_DRC *current, int cycles);
 void REGPARM(1) do_sh2_cmp(SH2_DRC *current);
 #endif
 
-extern SH2_DRC sh2s[2];
+extern SH2_DRC *sh2_drc_ctx;
 
 #endif /* __SH2_H__ */
