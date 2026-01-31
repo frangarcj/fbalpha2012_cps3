@@ -6,9 +6,6 @@
 extern u8 *tcache;
 extern u8 *tcache_ptr; // Code emission pointer used by emit_*.c
 
-// COUNT_OP is a debug macro, define as empty for now
-#define COUNT_OP
-
 void drc_cmn_init(void);
 void drc_cmn_cleanup(void);
 

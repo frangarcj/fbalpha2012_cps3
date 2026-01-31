@@ -825,10 +825,13 @@ SH2_INLINE void sh2_exception(/*const char *message,*/ int irqline)
 		if (sh2->internal_irq_level == irqline)
 		{
 			vector = sh2->internal_irq_vector;
+            sceClibPrintf("INTPSH2: INT EXCEPTION taken irqline=%d vector=%x PC=%08x SR=%08x\n", irqline, vector, sh2->pc, sh2->sr);
 			// LOG(("SH-2 #%d exception #%d (internal vector: $%x) after [%s]\n", cpu_getactivecpu(), irqline, vector, message));
 		}
-		else
+		else {
 			vector = 64 + irqline / 2;
+            sceClibPrintf("INTPSH2: EXT EXCEPTION taken irqline=%d vector=%x PC=%08x SR=%08x\n", irqline, vector, sh2->pc, sh2->sr);
+        }
 	}
 	else
 	{
@@ -3178,6 +3181,7 @@ static void sh2_timer_resync(void)
 {
 	int divider = div_tab[(sh2->m[5] >> 8) & 3];
 	UINT32 cur_time = sh2_GetTotalCycles();
+	sceClibPrintf("sh2_timer_resync %d %d\n", divider, cur_time);
 
 	if (divider)
 		sh2->frc += (cur_time - sh2->frc_base) >> divider;
@@ -3189,6 +3193,7 @@ static void sh2_timer_activate(void)
 	int max_delta = 0xfffff;
 	UINT16 frc;
 
+	sceClibPrintf("sh2_timer_activate\n");
 	// timer_adjust(sh2->timer, attotime_never, 0, attotime_zero);
 	sh2->timer_active = 0;
 	//	sh2->timer_cycles = 0;
@@ -3229,8 +3234,26 @@ static void sh2_timer_activate(void)
 	}
 }
 
+#ifdef DRC_SH2
+static void sh2_update_drc_pending_level(void)
+{
+    int level = -1;
+    for (int i = 15; i >= 0; i--) {
+        if (sh2->pending_irq & (1 << i)) {
+            level = i;
+            break;
+        }
+    }
+    if (sh2->internal_irq_level > level)
+        level = sh2->internal_irq_level;
+        
+    sh2->pending_level = level;
+}
+#endif
+
 static void sh2_recalc_irq(void)
 {
+	sceClibPrintf("sh2_recalc_irq\n");
 	int irq = 0, vector = -1;
 	int level;
 
@@ -3275,10 +3298,14 @@ static void sh2_recalc_irq(void)
 	sh2->internal_irq_level = irq;
 	sh2->internal_irq_vector = vector;
 	sh2->test_irq = 1;
+#ifdef DRC_SH2
+	sh2_update_drc_pending_level();
+#endif
 }
 
 static void sh2_timer_callback()
 {
+	sceClibPrintf("sh2_timer_callback\n");
 	UINT16 frc;
 	//	int cpunum = param;
 	//	cpuintrf_push_context(cpunum);
@@ -3302,10 +3329,12 @@ static void sh2_timer_callback()
 
 	sh2_recalc_irq();
 	sh2_timer_activate();
+	sceClibPrintf("sh2_timer_callback end\n");
 }
 
 static void sh2_dmac_callback(int dma)
 {
+	sceClibPrintf("sh2_dmac_callback %d\n", dma);
 	sh2->m[0x63 + 4 * dma] |= 2;
 	sh2->dma_timer_active[dma] = 0;
 	sh2_recalc_irq();
@@ -3313,6 +3342,7 @@ static void sh2_dmac_callback(int dma)
 
 static void sh2_dmac_check(int dma)
 {
+	sceClibPrintf("sh2_dmac_check %d\n", dma);
 	if (sh2->m[0x63 + 4 * dma] & sh2->m[0x6c] & 1)
 	{
 		if (!sh2->dma_timer_active[dma] && !(sh2->m[0x63 + 4 * dma] & 2))
@@ -3420,6 +3450,7 @@ static void sh2_internal_w(UINT32 offset, UINT32 data, UINT32 mem_mask)
 	UINT32 old = sh2->m[offset];
 	COMBINE_DATA(sh2->m + offset);
 
+	sceClibPrintf("sh2_internal_w %x %x %x\n", offset, data, mem_mask);
 	switch (offset)
 	{
 		// Timers
@@ -3573,10 +3604,13 @@ static void sh2_internal_w(UINT32 offset, UINT32 data, UINT32 mem_mask)
 	default:
 		break;
 	}
+
+	sceClibPrintf("sh2_internal_w end\n");
 }
 
 static UINT32 sh2_internal_r(UINT32 offset, UINT32 /*mem_mask*/)
 {
+	sceClibPrintf("sh2_internal_r %x %x\n", offset);
 	switch (offset)
 	{
 	case 0x04: // TIER, FTCSR, FRC
@@ -3634,15 +3668,23 @@ int Sh2Run(int cycles)
 
 		UINT16 opcode;
 
-		if (sh2->delay)
-		{
-			opcode = cpu_readop16(sh2->delay & AM);
+#ifdef MAME_DEBUG
+        //char buffer[128];
+        //DasmSH2(buffer, sh2->pc & AM, sh2->delay ? sh2->delay : sh2->pc);
+        //sceClibPrintf("INTPSH2: %08x %s\n", sh2->delay ? sh2->delay : sh2->pc, buffer);
+#endif
+        if (sh2->delay) {
+            UINT16 op = cpu_readop16(sh2->delay & AM);
+            //sceClibPrintf("INTPSH2: PC=%08x OP=%04x\n", sh2->delay, op);
+            opcode = op;
 			change_pc(sh2->pc & AM);
 			sh2->delay = 0;
 		}
 		else
 		{
 			opcode = cpu_readop16(sh2->pc & AM);
+            /*if ((calls % 300) == 0 && frame_cycles > 900000)
+                 sceClibPrintf("INTPSH2: PC=%08x OP=%04x\n", sh2->pc, opcode);*/
 			sh2->pc += 2;
 		}
 
@@ -3699,12 +3741,11 @@ int Sh2Run(int cycles)
 	int executed = cycles - sh2->sh2_icount;
     frame_cycles += executed;
     calls++;
-    if (calls < 50 || calls % 240 == 0) // approx every 60 frames (if 4 calls/frame)
-    {
-        sceClibPrintf("INTPSH2: Executed %d cycles in last batch (asked %d). Total frame: %d\n", executed, cycles, frame_cycles);
-        if (calls % 240 == 0) frame_cycles = 0;
-    }
-    return executed;
+
+	sceClibPrintf("INTPSH2: Frame %d: Executed %d cycles in last batch (asked %d). Total frame: %d PC=%08x OP=%04x\n", calls, executed, cycles, frame_cycles, sh2->pc, OPRW(sh2->pc));
+    if(calls==1246)
+		exit(1);
+	return executed;
 }
 
 #else
@@ -3746,6 +3787,7 @@ int Sh2Run(int cycles)
 		else
 		{
 			opcode = cpu_readop16(sh2->pc & AM);
+             sceClibPrintf("INTPSH2: PC=%08x OP=%04x\n", sh2->pc, opcode);
 			sh2->pc += 2;
 		}
 
@@ -3851,6 +3893,7 @@ int Sh2Run(int cycles)
 
 void Sh2SetIRQLine(const int line, const int state)
 {
+	sceClibPrintf("Sh2SetIRQLine %d,%d\n", line, state);
 	if (sh2->irq_line_state[line] == state)
 		return;
 	sh2->irq_line_state[line] = state;
@@ -3865,10 +3908,15 @@ void Sh2SetIRQLine(const int line, const int state)
 		if (sh2->delay)
 			sh2->test_irq = 1;
 		else
+#ifndef DRC_SH2
 			CHECK_PENDING_IRQ(/*"sh2_set_irq_line"*/);
+#endif
 
 		pSh2Ext->suspend = 0;
 	}
+#ifdef DRC_SH2
+	sh2_update_drc_pending_level();
+#endif
 }
 
 unsigned int Sh2GetPC(int)

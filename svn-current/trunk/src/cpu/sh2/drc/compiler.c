@@ -32,7 +32,7 @@
 #include <stdlib.h>
 #include <assert.h>
 
-#define DRC_DEBUG 0 // 1=basic, 2=count, 8=dispatcher
+#define DRC_DEBUG 0  // 1=basic, 2=count, 8=dispatcher
 #ifdef VITA
 #include <psp2/kernel/clib.h>
 #define printf sceClibPrintf
@@ -98,7 +98,8 @@
 
 // DRC adapter read16 (from sh2_drc_fba.inl)
 u32 REGPARM(2) p32x_sh2_read16(u32 a, SH2_DRC *sh2);
-// #include <platform/libpicofe/linux/host_dasm.h>
+#include "host_dasm.c"
+#define host_dasm_new_symbol(x) host_dasm_new_symbol_(x, #x)
 static int insns_compiled, hash_collisions, host_insn_count;
 #define COUNT_OP \
   host_insn_count++
@@ -110,6 +111,23 @@ static int insns_compiled, hash_collisions, host_insn_count;
 ///
 SH2_DRC *sh2_drc_ctx = NULL;
 static SH2_DRC *drc_fetch_sh2;
+static int cycles;
+
+#define DELAY_SAVE_T(sr)               \
+  {                                    \
+    int t_ = rcache_get_tmp();         \
+    emith_bic_r_imm(sr, T_save);       \
+    emith_and_r_r_imm(t_, sr, 1);      \
+    emith_or_r_r_lsl(sr, t_, T_SHIFT); \
+    rcache_free_tmp(t_);               \
+  }
+
+#define FLUSH_CYCLES(sr)                                         \
+  if (cycles > 0)                                                \
+    emith_sub_r_imm(sr, cycles << 12);                           \
+  else if (cycles < 0) /* may happen after a branch not taken */ \
+    emith_add_r_imm(sr, -cycles << 12);                          \
+  cycles = 0;
 
 #define FETCH_OP(pc) \
   (u16) p32x_sh2_fetch16((pc), drc_fetch_sh2)
@@ -3563,21 +3581,6 @@ static void emit_branch_linkage_code(SH2_DRC *sh2, struct block_desc *block, int
   }
 }
 
-#define DELAY_SAVE_T(sr)               \
-  {                                    \
-    int t_ = rcache_get_tmp();         \
-    emith_bic_r_imm(sr, T_save);       \
-    emith_and_r_r_imm(t_, sr, 1);      \
-    emith_or_r_r_lsl(sr, t_, T_SHIFT); \
-    rcache_free_tmp(t_);               \
-  }
-
-#define FLUSH_CYCLES(sr)                                         \
-  if (cycles > 0)                                                \
-    emith_sub_r_imm(sr, cycles << 12);                           \
-  else if (cycles < 0) /* may happen after a branch not taken */ \
-    emith_add_r_imm(sr, -cycles << 12);                          \
-  cycles = 0;
 
 static void *dr_get_pc_base(u32 pc, SH2_DRC *sh2);
 static void sh2_smc_rm_blocks(u32 a, int len, int tcache_id, int free);
@@ -3654,7 +3657,6 @@ static void REGPARM(2) * sh2_translate(SH2_DRC *sh2, int tcache_id)
   int blkid_main = 0;
   int skip_op = 0;
   int tmp, tmp2;
-  int cycles;
   int i, v;
   u32 u, m1, m2, m3, m4;
   int op;

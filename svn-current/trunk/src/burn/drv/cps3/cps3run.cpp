@@ -2454,6 +2454,7 @@ static void DrvDraw(void)
 }
 
 static INT32 cps_int10_cnt = 0;
+static INT32 nCps3CyclesExtra = 0;
 
 INT32 cps3Frame(void)
 {
@@ -2509,9 +2510,16 @@ INT32 cps3Frame(void)
 	cpu_start = GET_TIME_US();
 #endif
 
+	INT32 nSegment = 6250000 * 4 / 60 / 4;
+
 	for (INT32 i = 0; i < 4; i++)
 	{
-		Sh2Run(6250000 * 4 / 60 / 4);
+		INT32 nRun = nSegment - nCps3CyclesExtra;
+		if (nRun < 0) nRun = 100; // Sanity check, should not happen often if slices are small
+
+		INT32 nExecuted = Sh2Run(nRun);
+		
+		nCps3CyclesExtra = nExecuted - nRun;
 
 		if (cps_int10_cnt >= 2)
 		{

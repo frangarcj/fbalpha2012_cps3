@@ -42,13 +42,18 @@ static inline void drc_sync_icount(SH2 *ctx)
 {
     // Extract cycles from SR (bits 12-31)
     // Note: sh2_execute_drc packs (cycles-1) << 12
+    // first: read register sr from drc
     ctx->icount = (ctx->sr >> 12);
 }
 
 // Opcode fetch uses FETCH map, not READ map
 u32 REGPARM(2) p32x_sh2_fetch16(u32 a, SH2_DRC *ctx)
 {
+    DRC_DECLARE_SR;
     SH2* sh2_ptr = (SH2*)ctx;
+    DRC_SAVE_SR(sh2);
+    drc_sync_icount(sh2_ptr);
+
     unsigned char *pr = pSh2Ext->MemMap[(a >> SH2_SHIFT) + SH2_WADD * 2];
     if ((uintptr_t)pr >= SH2_MAXHANDLER)
     {
@@ -56,8 +61,10 @@ u32 REGPARM(2) p32x_sh2_fetch16(u32 a, SH2_DRC *ctx)
         a ^= 0x02;
 #endif
         return *((unsigned short *)(pr + (a & SH2_PAGEM)));
-    }
-    return pSh2Ext->ReadWord[(uintptr_t)pr](a);
+    } 
+    u32 val = pSh2Ext->ReadWord[(uintptr_t)pr](a);
+    DRC_RESTORE_SR(sh2);
+    return val;
 }
 
 void cache_flush_d_inval_i(void *start, void *end)
@@ -102,8 +109,10 @@ extern "C"
     // Read handlers - use pSh2Ext->MemMap for reads with validation
     u32 REGPARM(2) p32x_sh2_read8(u32 a, SH2_DRC *ctx)
     {
+        DRC_DECLARE_SR;
         SH2* sh2_ptr = (SH2*)ctx;
-        drc_sync_icount(sh2_ptr); // Sync time before IO access
+        DRC_SAVE_SR(sh2);
+        drc_sync_icount(sh2_ptr);
 
         unsigned char *pr = pSh2Ext->MemMap[(a >> SH2_SHIFT)];
         if ((uintptr_t)pr >= SH2_MAXHANDLER)
@@ -115,14 +124,18 @@ extern "C"
             return (int)(signed char)(*((unsigned char *)(pr + (a & SH2_PAGEM))));
 #endif
         }
-        return (int)(signed char)(pSh2Ext->ReadByte[(uintptr_t)pr](a));
+        int val = (int)(signed char)(pSh2Ext->ReadByte[(uintptr_t)pr](a));
+        DRC_RESTORE_SR(sh2);
+        return val;
     }
 
 
     u32 REGPARM(2) p32x_sh2_read16(u32 a, SH2_DRC *ctx)
     {
+        DRC_DECLARE_SR;
         SH2* sh2_ptr = (SH2*)ctx;
-        drc_sync_icount(sh2_ptr); // Sync unconditionally
+        DRC_SAVE_SR(sh2);
+        drc_sync_icount(sh2_ptr);
 
         unsigned char *pr = pSh2Ext->MemMap[(a >> SH2_SHIFT)];
         if ((uintptr_t)pr >= SH2_MAXHANDLER)
@@ -130,34 +143,45 @@ extern "C"
 #ifndef MSB_FIRST
             u32 addr_swapped = a ^ 0x02;
             unsigned short v = *((unsigned short *)(pr + (addr_swapped & SH2_PAGEM)));
-            return (int)(signed short)v;
+            int val = (int)(signed short)v;
 #else
             unsigned short v = *((unsigned short *)(pr + (a & SH2_PAGEM)));
-            return (int)(signed short)v;
+            int val = (int)(signed short)v;
 #endif
+            DRC_RESTORE_SR(sh2);
+            return val;
         }
-        return (int)(signed short)pSh2Ext->ReadWord[(uintptr_t)pr](a);
+        int val = (int)(signed short)pSh2Ext->ReadWord[(uintptr_t)pr](a);
+        DRC_RESTORE_SR(sh2);
+        return val;
     }
 
     u32 REGPARM(2) p32x_sh2_read32(u32 a, SH2_DRC *ctx)
     {
+        DRC_DECLARE_SR;
         SH2* sh2_ptr = (SH2*)ctx;
+        DRC_SAVE_SR(sh2);
         drc_sync_icount(sh2_ptr);
 
         unsigned char *pr = pSh2Ext->MemMap[(a >> SH2_SHIFT)];
         
         if ((uintptr_t)pr >= SH2_MAXHANDLER){
-		    return *((unsigned int *)(pr + (a & SH2_PAGEM)));
+		    u32 val = *((unsigned int *)(pr + (a & SH2_PAGEM)));
+            DRC_RESTORE_SR(sh2);
+            return val;
 	    }
 	    u32 val = pSh2Ext->ReadLong[(uintptr_t)pr](a);
+        DRC_RESTORE_SR(sh2);
         return val;
     }
 
     // Write handlers - use pSh2Ext->MemMap for writes with validation
     void REGPARM(3) p32x_sh2_write8(u32 a, u32 d, SH2_DRC *ctx)
     {
+        DRC_DECLARE_SR;
         SH2* sh2_ptr = (SH2*)ctx;
-        drc_sync_icount(sh2_ptr); // Critical for Timer/DMAC activation time
+        DRC_SAVE_SR(sh2);
+        drc_sync_icount(sh2_ptr);
 
         if (!pSh2Ext)
             return;
@@ -171,15 +195,19 @@ extern "C"
 #else
             *((unsigned char *)(pr + (a & SH2_PAGEM))) = (unsigned char)d;
 #endif
+            DRC_RESTORE_SR(sh2);
             return;
         }
         pSh2Ext->WriteByte[(uintptr_t)pr](a, d);
+        DRC_RESTORE_SR(sh2);
         return;
     }
 
     void REGPARM(3) p32x_sh2_write16(u32 a, u32 d, SH2_DRC *ctx)
     {
+        DRC_DECLARE_SR;
         SH2* sh2_ptr = (SH2*)ctx;
+        DRC_SAVE_SR(sh2);
         drc_sync_icount(sh2_ptr);
 
         unsigned char *pr = pSh2Ext->MemMap[(a >> SH2_SHIFT) + SH2_WADD];
@@ -192,15 +220,19 @@ extern "C"
 #else
             *((unsigned short *)(pr + (a & SH2_PAGEM))) = (unsigned short)d;
 #endif
+            DRC_RESTORE_SR(sh2);
             return;
         }
         pSh2Ext->WriteWord[(uintptr_t)pr](a, d);
+        DRC_RESTORE_SR(sh2);
         return;
     }
     
     void REGPARM(3) p32x_sh2_write32(u32 a, u32 d, SH2_DRC *ctx)
     {
+        DRC_DECLARE_SR;
         SH2* sh2_ptr = (SH2*)ctx;
+        DRC_SAVE_SR(sh2);
         drc_sync_icount(sh2_ptr);
 
         unsigned char *pr = pSh2Ext->MemMap[(a >> SH2_SHIFT) + SH2_WADD];
@@ -208,9 +240,11 @@ extern "C"
         if ((uintptr_t)pr >= SH2_MAXHANDLER)
         {
             *((unsigned int *)(pr + (a & SH2_PAGEM))) = (unsigned int)d;
+            DRC_RESTORE_SR(sh2);
             return;
         }
         pSh2Ext->WriteLong[(uintptr_t)pr](a, d);
+        DRC_RESTORE_SR(sh2);
         return;
     }
 
@@ -296,9 +330,19 @@ static void sh2_drc_setup_mem_maps(SH2* sh2_ptr)
 // IRQ Callback compatible with JIT
 static int REGPARM(2) drc_irq_callback(SH2_DRC *ctx, int level)
 {
-    // FBA SH2 core uses (64 + level / 2) for external IRQ pins (IRQ0-IRQ7)
-    if (level == 16) return 11; // NMI
-    return 64 + level / 2;
+    SH2* sh2 = (SH2*)ctx;
+    int vector;
+
+    if (sh2->internal_irq_level == level) {
+         vector = sh2->internal_irq_vector;
+         sceClibPrintf("INTPSH2: DRC INT EXCEPTION taken irqline=%d vector=%x\n", level, vector);
+    } else {
+         // FBA SH2 core uses (64 + level / 2) for external IRQ pins (IRQ0-IRQ7)
+         if (level == 16) vector = 11; // NMI
+         else vector = 64 + level / 2;
+         sceClibPrintf("INTPSH2: DRC EXT EXCEPTION taken irqline=%d vector=%x\n", level, vector);
+    }
+    return vector;
 }
 
 // Initialize DRC
@@ -409,69 +453,108 @@ void Sh2DrcReset()
     // Don't reset regs here, FBA does it
 }
 
+int calls = 0;
+
+#define MAX_BATCH 4096
+
 INT32 Sh2RunDrc(INT32 cycles)
 {
     SH2 *sh2 = &pSh2Ext->sh2; // Ensure local sh2 is valid
-    Sh2DrcInit(); // Check per-cpu init
-    
-    // 1. Setup execution
-    sh2->cycles_timeslice = cycles;
-    sh2->icount = cycles; // Start count
-    
-    // Sync pending interrupts for DRC
-    // FBA uses bitmask pending_irq. DRC needs pending_level.
-    // Logic from FBA CHECK_PENDING_IRQ:
-    int level = -1;
-    if (sh2->pending_irq)
+    INT32 cycles_to_execute = cycles;
+    INT32 cycles_executed_total = 0;
+
+    while (cycles_to_execute > 0)
     {
-        for (int i = 15; i >= 0; i--) {
-            if (sh2->pending_irq & (1 << i)) {
-                level = i;
-                break;
+        // 1. Determine batch size
+        INT32 batch_size = cycles_to_execute;
+        if (batch_size > MAX_BATCH) batch_size = MAX_BATCH; // Hard limit for responsiveness
+
+        // 2. Clamp to next timer event
+        UINT32 current_total = sh2->cycle_counts; // Base for this batch
+        if (sh2->timer_active) {
+            UINT32 target = sh2->timer_base + sh2->timer_cycles;
+            INT32 delta = (INT32)(target - current_total);
+            if (delta < batch_size) {
+                 batch_size = delta + 1; // +1 to ensure trigger
             }
         }
-    }
-    // Check internal
-    if (sh2->internal_irq_level > level)
-        level = sh2->internal_irq_level;
         
-    sh2->pending_level = level;
-    sh2->pending_int_irq = sh2->internal_irq_level;
-    sh2->pending_int_vector = sh2->internal_irq_vector;
-    
-    // 2. Execute
-    int cycles_remaining = sh2_execute_drc((SH2_DRC*)sh2, cycles);
-    
-    // 3. Update total cycles (FBA)
-    // cycles_remaining is what's left.
-    // executed = cycles - cycles_remaining.
-    // If JIT exited early (e.g. poll), cycles_remaining > 0.
-    
-    int executed = cycles - cycles_remaining;
-    
-    // Update FBA counters
-    sh2->cycle_counts += executed;
-    sh2->sh2_total_cycles += executed;
-    
-    // Check timers
-    // We do this at block end.
-    // The JIT execution might have called p32x_sh2_writeXX -> timer activated.
-    // Timers might need servicing now.
-    
-    unsigned int cy = sh2->sh2_total_cycles; // Updated!
-    if (sh2->dma_timer_active[0] && (cy - sh2->dma_timer_base[0]) >= sh2->dma_timer_cycles[0])
-        sh2_dmac_callback(0);
-    if (sh2->dma_timer_active[1] && (cy - sh2->dma_timer_base[1]) >= sh2->dma_timer_cycles[1])
-        sh2_dmac_callback(1);
-    if (sh2->timer_active && (cy - sh2->timer_base) >= sh2->timer_cycles)
-        sh2_timer_callback();
+        if (batch_size <= 0) batch_size = 1;
 
-    // Cleanup for FBA state consistency
-    // So that sh2_GetTotalCycles returns accurate 'cycle_counts' between runs
+        sceClibPrintf("INTPSH2: Minislice batch_size=%d (Next timer in %d)\n", batch_size, sh2->timer_active ? (sh2->timer_base + sh2->timer_cycles - current_total) : -1);
+
+        // 3. Setup Context
+        sh2->cycles_timeslice = batch_size;
+        sh2->sh2_cycles_to_run = batch_size; 
+        sh2->icount = batch_size; 
+        
+        // 4. Sync Pending Interrupts (Must be done inside loop as timers change it)
+        int level = -1;
+        if (sh2->pending_irq)
+        {
+            for (int i = 15; i >= 0; i--) {
+                if (sh2->pending_irq & (1 << i)) {
+                    level = i;
+                    break;
+                }
+            }
+        }
+        // Check internal
+        if (sh2->internal_irq_level > level)
+            level = sh2->internal_irq_level;
+            
+        sh2->pending_level = level;
+        sh2->pending_int_irq = sh2->internal_irq_level;
+        sh2->pending_int_vector = sh2->internal_irq_vector;
+        
+        // 5. Execute JIT Batch
+        int cycles_remaining = sh2_execute_drc((SH2_DRC*)sh2, batch_size);
+        
+        int executed_batch = batch_size - cycles_remaining;
+        
+        // 6. Update Counters
+        sh2->cycle_counts += executed_batch;
+        sh2->sh2_total_cycles += executed_batch;
+        
+        cycles_to_execute -= executed_batch;
+        cycles_executed_total += executed_batch;
+
+        // 7. Check Timers & DMAs
+        unsigned int cy = sh2->cycle_counts;
+        
+        if (sh2->timer_active && (cy - sh2->timer_base) >= sh2->timer_cycles) {
+            sh2_timer_callback();
+        }
+
+        if (sh2->dma_timer_active[0] && (cy - sh2->dma_timer_base[0]) >= sh2->dma_timer_cycles[0])
+            sh2_dmac_callback(0);
+        if (sh2->dma_timer_active[1] && (cy - sh2->dma_timer_base[1]) >= sh2->dma_timer_cycles[1])
+            sh2_dmac_callback(1);
+
+        // 8. Early Exit Check
+        // If JIT returned early (remaining > 0), it usually means it hit a stop condition (or we force it).
+        // In our case, if we still have cycles requested by FBA, we should continue loop UNLESS
+        // FBA expects strictly timesliced run. But usually running 'cycles' total is the goal.
+        // However, if we forced a yield via cycles_timeslice=0 elsewhere, execute returns remaining.
+        // We will trust the loop to continue.
+        
+        // But if executed_batch == 0, we must break to avoid infinite loop on stuck state
+        if (executed_batch == 0 && cycles_remaining == batch_size) {
+            break;
+        }
+    }
+
+    // Cleanup for FBA consistency
     sh2->cycles_timeslice = 0;
     sh2->icount = 0;
 
-    return executed;
+    calls++;
+    // if ((calls % 60) == 0) // Reduce spam
+       sceClibPrintf("INTPSH2: Frame %d: Executed %d cycles in last batch (asked %d). Total frame: %d PC=%08x OP=%04x\n", calls, cycles_executed_total, cycles, sh2->sh2_total_cycles, sh2->pc, OPRW(sh2->pc));
+    /*if(calls == 10 )
+        exit(0);*/
+
+    return cycles_executed_total;
 }
 
 void Sh2DrcExit()
