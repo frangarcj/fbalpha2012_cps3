@@ -335,12 +335,10 @@ static int REGPARM(2) drc_irq_callback(SH2_DRC *ctx, int level)
 
     if (sh2->internal_irq_level == level) {
          vector = sh2->internal_irq_vector;
-         sceClibPrintf("INTPSH2: DRC INT EXCEPTION taken irqline=%d vector=%x\n", level, vector);
     } else {
          // FBA SH2 core uses (64 + level / 2) for external IRQ pins (IRQ0-IRQ7)
          if (level == 16) vector = 11; // NMI
          else vector = 64 + level / 2;
-         sceClibPrintf("INTPSH2: DRC EXT EXCEPTION taken irqline=%d vector=%x\n", level, vector);
     }
     return vector;
 }
@@ -453,9 +451,7 @@ void Sh2DrcReset()
     // Don't reset regs here, FBA does it
 }
 
-int calls = 0;
-
-#define MAX_BATCH 4096
+#define MAX_BATCH 4096 * 200 // 81920
 
 INT32 Sh2RunDrc(INT32 cycles)
 {
@@ -480,8 +476,6 @@ INT32 Sh2RunDrc(INT32 cycles)
         }
         
         if (batch_size <= 0) batch_size = 1;
-
-        sceClibPrintf("INTPSH2: Minislice batch_size=%d (Next timer in %d)\n", batch_size, sh2->timer_active ? (sh2->timer_base + sh2->timer_cycles - current_total) : -1);
 
         // 3. Setup Context
         sh2->cycles_timeslice = batch_size;
@@ -547,12 +541,6 @@ INT32 Sh2RunDrc(INT32 cycles)
     // Cleanup for FBA consistency
     sh2->cycles_timeslice = 0;
     sh2->icount = 0;
-
-    calls++;
-    // if ((calls % 60) == 0) // Reduce spam
-       sceClibPrintf("INTPSH2: Frame %d: Executed %d cycles in last batch (asked %d). Total frame: %d PC=%08x OP=%04x\n", calls, cycles_executed_total, cycles, sh2->sh2_total_cycles, sh2->pc, OPRW(sh2->pc));
-    /*if(calls == 10 )
-        exit(0);*/
 
     return cycles_executed_total;
 }

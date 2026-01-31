@@ -10,7 +10,7 @@
 
 // Vita: Request RWX memory for SH2 JIT
 #ifdef VITA
-unsigned int _newlib_vm_size_user = 4 * 1024 * 1024; // 4MB for DRC
+unsigned int _newlib_vm_size_user = 16 * 1024 * 1024; // 16MB for DRC
 #endif
 
 #ifdef WII_VM
